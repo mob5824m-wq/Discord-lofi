@@ -45,7 +45,13 @@ permissions:
 # false every later release on that ref would queue behind it forever. Newer
 # wins.
 concurrency:
-  group: release-${{ github.ref }}
+  # github.workflow_sha is deliberate. A run whose job asks for a retired
+  # runner label is never picked up and sits queued until GitHub times it out
+  # (up to 24h), and every later release on that ref queues behind it. Including
+  # the workflow file's SHA means fixing this file - which is what you have to
+  # do when a label is retired - also starts a fresh group instead of queueing
+  # behind the run that can never finish.
+  group: release-${{ github.ref }}-${{ github.workflow_sha }}
   cancel-in-progress: true
 
 jobs:
@@ -359,7 +365,7 @@ jobs:
             echo "::group::$log (last 120 lines)"
             tail -n 120 "$log"
             echo "::endgroup::"
-            grep -m 5 -E "error|Error|ERROR|Failed|failed|Traceback|No matching" "$log" \
+            grep -m 5 -E "error|Error|ERROR|Failed|failed|Traceback|No matching|^pip |^python " "$log" \
               | cut -c1-240 | sed 's/^/::error::/'
           done
           if [ "$FOUND" = "0" ]; then
