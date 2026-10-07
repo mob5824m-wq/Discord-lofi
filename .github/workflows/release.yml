@@ -516,7 +516,7 @@ jobs:
             | OS | Download | Install |
             |---|---|---|
             | **Windows** (x64) | `lofi-${{ steps.version.outputs.ver }}-windows-amd64-setup.exe` | run it → `C:\Program Files\Lofi\lofi.exe`, on your PATH |
-            | **Windows** (ARM64) | `lofi-${{ steps.version.outputs.ver }}-windows-arm64-setup.exe` | run it |
+            | **Windows** (ARM64) | `lofi-${{ steps.version.outputs.ver }}-windows-arm64-setup.exe` | run it — best effort: that runner cannot always install the Python deps, so this file is sometimes absent |
             | **macOS** (Apple Silicon) | `lofi-${{ steps.version.outputs.ver }}-macos-arm64.dmg` | open, run `Lofi.pkg` → `/usr/local/bin/lofi` |
             | **macOS** (Intel) | `lofi-${{ steps.version.outputs.ver }}-macos-amd64.dmg` | open, run `Lofi.pkg` |
             | **Debian / Ubuntu** (amd64) | `lofi-${{ steps.version.outputs.ver }}-linux-amd64.deb` | `sudo dpkg -i lofi-*.deb && sudo apt-get install -f` |
