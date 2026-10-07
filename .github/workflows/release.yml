@@ -39,9 +39,14 @@ permissions:
 # patch +1, commits, tags, and publishes a GitHub Release with the 6 packages.
 # Tag pushes and workflow_dispatch still work as before, using the tag/input version.
 
+# One release per ref at a time. cancel-in-progress matters more than it looks:
+# a run whose job asks for a retired runner label (GitHub retired `macos-13` on
+# 2025-12-04) is never picked up and sits queued, and with cancel-in-progress
+# false every later release on that ref would queue behind it forever. Newer
+# wins.
 concurrency:
   group: release-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   # --------------------------------------------------------------------- #
