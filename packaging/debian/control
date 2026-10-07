@@ -1,0 +1,24 @@
+Package: lofi
+Version: @VERSION@
+Section: sound
+Priority: optional
+Architecture: @ARCH@
+Essential: no
+Installed-Size: @INSTALLED_SIZE@
+Maintainer: Lofi <lofi@example.com>
+Depends: ffmpeg, libopus0, ca-certificates
+Recommends: libnss3
+Suggests: yt-dlp
+Homepage: https://github.com/mob5824m-wq/Discord-lofi
+Description: Discord bot that plays lofi in a voice channel, with a web dashboard
+ Lofi joins a voice channel in your Discord server and plays lofi without
+ stopping, and serves a token-authenticated web dashboard to control it.
+ .
+ It can stream from YouTube broadcasts and SomaFM radio, shuffle your own
+ music/ folder, or render Studio Lofi beats locally with no network at all.
+ .
+ This package installs the single-file `lofi` binary to /usr/local/bin and a
+ systemd unit (not enabled) to /lib/systemd/system/lofi.service.
+ .
+ No bot token is shipped: set LOFI_TOKEN in /etc/lofi/lofi.env, or export it in
+ your shell, then run `lofi --check` before starting the bot.

@@ -1,0 +1,45 @@
+# systemd unit for the Lofi Discord bot.
+#
+# Installed (disabled) by the .deb as /lib/systemd/system/lofi.service.
+# It is NOT started automatically: the bot needs a token first.
+#
+#   1. sudo editor /etc/lofi/lofi.env     # put your bot token there
+#   2. lofi --check                       # confirm ffmpeg + opus are found
+#   3. sudo systemctl enable --now lofi
+#
+# Logs: journalctl -u lofi -f
+[Unit]
+Description=Lofi - Discord bot that plays lofi in voice channels
+Documentation=https://github.com/mob5824m-wq/Discord-lofi
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# A dedicated unprivileged user is the safer default; create it with:
+#   sudo useradd --system --home /var/lib/lofi --create-home --shell /usr/sbin/nologin lofi
+# Remove User=/Group= to run as root instead.
+User=lofi
+Group=lofi
+
+# The bot token lives here, mode 0600, owned by the service user.
+# "-" means "ignore if missing", so exporting LOFI_TOKEN another way also works.
+EnvironmentFile=-/etc/lofi/lofi.env
+
+# Where config.json, lofi.db and the cache go. Pin it: a system service's HOME
+# is not the place you want your state.
+Environment=LOFI_HOME=/var/lib/lofi
+
+ExecStart=/usr/local/bin/lofi
+Restart=on-failure
+RestartSec=10
+
+# Hardening: the bot writes only to LOFI_HOME and needs no device access.
+NoNewPrivileges=true
+PrivateDevices=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/var/lib/lofi
+
+[Install]
+WantedBy=multi-user.target

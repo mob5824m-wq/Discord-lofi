@@ -5,6 +5,7 @@ application, inviting the bot, picking a station — is in [SETUP.md](SETUP.md).
 wrong, [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
 
 - [What you need](#what-you-need)
+- [Install from a package — no Python needed](#install-from-a-package--no-python-needed)
 - [Debian / Ubuntu](#debian--ubuntu)
 - [macOS](#macos)
 - [Windows](#windows)
@@ -24,7 +25,7 @@ wrong, [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
 
 | Piece | Required? | Why |
 | --- | --- | --- |
-| Python **3.9+** | yes | the bot itself (3.11 or 3.12 recommended) |
+| Python **3.9+** | yes, from source | the bot itself (3.11 or 3.12 recommended). The installers in [Install from a package](#install-from-a-package--no-python-needed) carry their own interpreter |
 | **ffmpeg** | yes | decodes everything into the PCM Discord needs |
 | **libopus** | yes | encodes that PCM into Opus for voice |
 | `yt-dlp` | no | YouTube stations and resolving links. Without it only streams, your library and Studio Lofi work |
@@ -35,6 +36,72 @@ ffmpeg and libopus are the two that trip people up, because neither is a Python 
 shells out to an `ffmpeg` binary and loads `libopus` as a shared library at runtime. Both are
 available everywhere, and there is a pip fallback for ffmpeg (`imageio-ffmpeg`) that the bot will
 find on its own.
+
+---
+
+## Install from a package — no Python needed
+
+Every release publishes OS-native installers, built on GitHub Actions for each
+OS and CPU. If you just want the bot running, start here; the sections after
+this one are the from-source path.
+
+| OS | Download | Install |
+|---|---|---|
+| Windows x64 | `lofi-windows-amd64-setup.exe` | run it — installs to `C:\Program Files\Lofi`, adds `lofi` to PATH |
+| Windows ARM64 | `lofi-windows-arm64-setup.exe` | run it |
+| macOS Apple Silicon | `lofi-macos-arm64.dmg` | open the image, run `Lofi.pkg` |
+| macOS Intel | `lofi-macos-amd64.dmg` | open the image, run `Lofi.pkg` |
+| Debian / Ubuntu amd64 | `lofi-linux-amd64.deb` | `sudo dpkg -i lofi-linux-amd64.deb` |
+| Debian / Ubuntu arm64 | `lofi-linux-arm64.deb` | `sudo dpkg -i lofi-linux-arm64.deb` |
+
+All of them are on the [latest release
+page](https://github.com/mob5824m-wq/Discord-lofi/releases/latest); the links
+above are the un-versioned names, so `/releases/latest/download/<name>` is a
+stable URL. Each file also exists under its versioned name
+(`lofi-1.0.1-linux-amd64.deb`) when you want to pin one.
+
+```bash
+# Debian / Ubuntu
+sudo apt install ffmpeg libopus0                 # runtime deps, not bundled
+sudo dpkg -i lofi-linux-amd64.deb
+sudo apt-get install -f -y                       # pulls anything still missing
+lofi --check
+
+# macOS
+brew install ffmpeg opus
+open lofi-macos-arm64.dmg                        # then run Lofi.pkg
+lofi --check
+
+# Windows (PowerShell)
+winget install Gyan.FFmpeg
+.\lofi-windows-amd64-setup.exe
+lofi --check
+```
+
+Then set the token and run it — on Linux the natural place for a service is
+`/etc/lofi/lofi.env` (created by the package, mode 0600):
+
+```bash
+sudo editor /etc/lofi/lofi.env      # LOFI_TOKEN=...
+lofi --check
+LOFI_TOKEN=... lofi                 # foreground
+sudo systemctl enable --now lofi    # or as a service
+```
+
+Check a download before you trust it:
+
+```bash
+sha256sum -c SHA256SUMS.txt --ignore-missing
+```
+
+Prefer nothing installed at all? Each release also publishes the raw binary
+(`lofi-linux-amd64`, `lofi-macos-arm64`, `lofi-windows-amd64.exe`) with the same
+flags and no installer. Uninstalling the packages: `sudo apt remove lofi`,
+*Apps & features* → Lofi, or `sudo rm /usr/local/bin/lofi && sudo pkgutil
+--forget io.github.mob5824m-wq.lofi`.
+
+How those installers are made — and how to build one yourself — is in
+[PACKAGING.md](PACKAGING.md).
 
 ---
 

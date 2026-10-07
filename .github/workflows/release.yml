@@ -107,23 +107,22 @@ jobs:
           echo "Pushed v$VER at $SHA"
 
   # --------------------------------------------------------------------- #
-  # Build the 6 native binaries + OS-native packages
+  # Build the 6 native binaries and wrap each in its OS-native installer.
+  #
+  # Neither PyInstaller nor the OS packagers cross-compile, so every entry runs
+  # on a runner whose CPU and OS match the artifact it produces:
+  #   .deb  dpkg-deb          (Debian/Ubuntu, amd64 + arm64)
+  #   .dmg  pkgbuild+hdiutil  (macOS, Intel + Apple Silicon; holds a .pkg)
+  #   .exe  makensis / NSIS   (Windows, x64 + ARM64)
+  #
+  # The job fails rather than degrades: a zip renamed to .deb installs nothing
+  # and looks identical to a real one on the release page, so
+  # scripts/verify_packages.py checks the actual bytes before anything is
+  # published.
   # --------------------------------------------------------------------- #
   build:
     needs: prepare
     if: always() && (needs.prepare.result == 'success' || needs.prepare.result == 'skipped') && github.actor != 'github-actions[bot]'
-    # We handle the skipped case with a fallback in the `if` below via `!cancelled()`
-    # Instead we use a simpler: if prepare was skipped, needs.prepare.result == 'skipped'
-    # GitHub's `needs` requires the job to have run; to allow skipped we use `if: always()`
-    # But we declared `if: github.actor != ...` at job level, which already covers.
-    # We need to allow build to run when prepare was skipped. Use `if: always()` trick:
-    #   if: always() && (needs.prepare.result == 'success' || needs.prepare.result == 'skipped') && github.actor != 'github-actions[bot]'
-    # However we can't reference `needs` if we also have `if` at job level that already checks actor.
-    # So we keep job-level `if` for actor, and add a second `if` via `needs` handling inside.
-    # Workaround: make `needs` optional by using `if: always()` at job level and checking inside steps.
-    # Simpler: don't make build depend on prepare when prepare is skipped — use `needs: [prepare]` with `if: always()`.
-    # We'll keep `needs: prepare` and handle skipped via `if: always()` in the job's `if`.
-    # For now we keep a single `if` that covers both.
     strategy:
       fail-fast: false
       matrix:
@@ -133,7 +132,6 @@ jobs:
             target_os: linux
             arch: amd64
             artifact: lofi-linux-amd64
-            package: lofi-linux-amd64.deb
             runner_note: debian amd64 (.deb)
 
           - os: ubuntu-24.04-arm
@@ -141,15 +139,13 @@ jobs:
             target_os: linux
             arch: arm64
             artifact: lofi-linux-arm64
-            package: lofi-linux-arm64.deb
-            runner_note: debian arm64 (.deb)
+            runner_note: debian arm64 (.deb) — Raspberry Pi / Graviton
 
           - os: macos-13
             py: "3.11"
             target_os: macos
             arch: amd64
             artifact: lofi-macos-amd64
-            package: lofi-macos-amd64.dmg
             runner_note: mac intel (.dmg)
 
           - os: macos-14
@@ -157,7 +153,6 @@ jobs:
             target_os: macos
             arch: arm64
             artifact: lofi-macos-arm64
-            package: lofi-macos-arm64.dmg
             runner_note: mac apple silicon (.dmg)
 
           - os: windows-2022
@@ -165,28 +160,26 @@ jobs:
             target_os: windows
             arch: amd64
             artifact: lofi-windows-amd64.exe
-            package: lofi-windows-amd64-setup.exe
-            runner_note: windows amd64 (.exe installer)
+            runner_note: windows amd64 (.exe NSIS installer)
 
           - os: windows-11-arm
             py: "3.11"
             target_os: windows
             arch: arm64
             artifact: lofi-windows-arm64.exe
-            package: lofi-windows-arm64-setup.exe
-            runner_note: windows arm64 (.exe installer)
+            runner_note: windows arm64 (.exe NSIS installer)
 
     name: build ${{ matrix.target_os }}-${{ matrix.arch }} (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      # If prepare bumped, ensure VERSION file reflects the bumped version
-      # (the checkout here is at the pre-bump merge commit; prepare's push is at the new bump commit)
+      # If prepare bumped, make the checked-out VERSION match, so the binary's
+      # --version and the package name agree with the tag being released.
       - name: Sync bumped VERSION from prepare
         if: needs.prepare.outputs.ver != ''
         shell: bash
@@ -200,28 +193,47 @@ jobs:
           python-version: ${{ matrix.py }}
           cache: pip
 
-      - name: Install system audio dependencies (Linux)
+      # ------------------------------------------------------------------ #
+      # Tools each OS needs to produce a *real* installer, plus the two
+      # runtime deps (ffmpeg, libopus) that stay outside the binary.
+      # ------------------------------------------------------------------ #
+      - name: Install system dependencies (Linux)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ffmpeg libopus0 dpkg-dev
           ffmpeg -version | head -1
-          ldconfig -p | grep opus || true
-          dpkg-deb --version
+          dpkg-deb --version | head -1
+          ldconfig -p | grep -c opus || true
 
-      - name: Install system audio dependencies (macOS)
+      - name: Install system dependencies (macOS)
         if: runner.os == 'macOS'
         run: |
-          brew update
-          brew install ffmpeg opus create-dmg || brew upgrade ffmpeg opus create-dmg || true
-          ffmpeg -version | head -1
-          hdiutil help | head -1 || true
+          # pkgbuild and hdiutil ship with the OS; only the runtime deps come
+          # from brew. Both are best-effort: a missing ffmpeg fails --check,
+          # not the packaging.
+          brew install ffmpeg opus || brew upgrade ffmpeg opus || true
+          command -v pkgbuild || { echo "::error::pkgbuild missing"; exit 1; }
+          command -v hdiutil || { echo "::error::hdiutil missing"; exit 1; }
+          ffmpeg -version | head -1 || true
 
-      - name: Install system audio dependencies (Windows)
+      - name: Install system dependencies (Windows)
         if: runner.os == 'Windows'
+        shell: pwsh
         run: |
-          choco install ffmpeg nsis -y --no-progress || winget install -e --id Gyan.FFmpeg || echo "ffmpeg/NSIS install best-effort"
-          makensis /VERSION || echo "NSIS not yet on PATH"
+          choco install nsis -y --no-progress
+          $nsis = @("${env:ProgramFiles(x86)}\NSIS\makensis.exe", "$env:ProgramFiles\NSIS\makensis.exe") |
+            Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $nsis) {
+            Write-Host "::error::makensis not found after 'choco install nsis'"
+          } else {
+            Add-Content -Path $env:GITHUB_PATH -Value (Split-Path $nsis)
+            & $nsis /VERSION
+          }
+          choco install ffmpeg -y --no-progress
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "ffmpeg install failed - the installer build does not need it (not fatal)"
+          }
 
       - name: Install Python dependencies
         run: |
@@ -245,45 +257,78 @@ jobs:
           fi
           cat "$GITHUB_OUTPUT"
 
-      - name: Build binary (PyInstaller) + package
+      # One PyInstaller run and one packaging run, both inside scripts/build.py:
+      # running PyInstaller twice (once here, once there) doubles the build for
+      # no benefit and hides which of the two actually failed.
+      - name: Build binary + OS-native installer
         shell: bash
         run: |
-          echo "Building for ${{ matrix.target_os }}/${{ matrix.arch }} on ${{ matrix.os }} (ver ${{ steps.version.outputs.ver }})"
-          # Ensure VERSION file matches the resolved version so the binary's --version is correct
+          set -o pipefail
           echo "${{ steps.version.outputs.ver }}" > VERSION
-          python -m PyInstaller lofi.spec --noconfirm --log-level WARN
-          ls -lh dist/
-          python scripts/build.py
-          ls -lh dist/
+          python scripts/build.py 2>&1 | tee build.log
 
-      - name: Verify package
+      - name: Verify the artifact is the real thing
         shell: bash
         run: |
           VER="${{ steps.version.outputs.ver }}"
           OS="${{ matrix.target_os }}"
           ARCH="${{ matrix.arch }}"
-          if [ "$OS" = "linux" ]; then PKG="dist/lofi-${VER}-linux-${ARCH}.deb"
-          elif [ "$OS" = "macos" ]; then PKG="dist/lofi-${VER}-macos-${ARCH}.dmg"
-          elif [ "$OS" = "windows" ]; then PKG="dist/lofi-${VER}-windows-${ARCH}-setup.exe"
-          fi
-          echo "Expecting package: $PKG"
+          case "$OS" in
+            linux)   PKG="dist/lofi-${VER}-linux-${ARCH}.deb" ;;
+            macos)   PKG="dist/lofi-${VER}-macos-${ARCH}.dmg" ;;
+            windows) PKG="dist/lofi-${VER}-windows-${ARCH}-setup.exe" ;;
+          esac
+          echo "Expecting: $PKG"
           ls -lh dist/
-          test -f "$PKG" || (echo "Package not found: $PKG" && ls -lh dist/ && exit 1)
-          echo "Package present: $PKG"
-          if [ "$OS" = "linux" ]; then dpkg-deb -I "$PKG" | head -n 20 || unzip -l "$PKG" | head -n 20; fi
-          if [ "$OS" = "macos" ]; then hdiutil verify "$PKG" 2>&1 | head -n 20 || echo "hdiutil verify skipped (placeholder on Linux)"; fi
-          if [ "$OS" = "windows" ]; then ls -lh "$PKG" && echo "Windows installer size $(stat -c%s "$PKG" 2>/dev/null || stat -f%z "$PKG") bytes"; fi
+
+          # Byte-level gate: real .deb/.dmg/.exe, not a renamed archive.
+          python scripts/verify_packages.py dist/ --expect "$(basename "$PKG")"
+
+          # ...and the binary inside still runs.
           BIN="dist/${{ matrix.artifact }}"
-          if [ ! -f "$BIN" ]; then BIN="dist/lofi"; fi
-          chmod +x "$BIN" || true
-          if [ "$OS" != "windows" ]; then
-            LOFI_TOKEN=ci-dummy-token LOFI_HOME="$RUNNER_TEMP/lofi-home" "$BIN" --version || true
-            LOFI_TOKEN=ci-dummy-token LOFI_HOME="$RUNNER_TEMP/lofi-home" "$BIN" --check || echo "--check exit code $?"
+          [ -f "$BIN" ] || BIN="dist/lofi"
+          chmod +x "$BIN" 2>/dev/null || true
+          export LOFI_TOKEN=ci-dummy-token-not-used
+          export LOFI_HOME="$RUNNER_TEMP/lofi-home"
+          if [ "$OS" = "windows" ]; then
+            "$BIN" --version
           else
-            "$BIN" --version || true
+            "$BIN" --version
+            "$BIN" --check || echo "--check reported missing system deps (exit $?)"
           fi
 
-      - name: Upload artifact (binary + package)
+          # Per-OS detail, so the log shows what a user will actually get.
+          if [ "$OS" = "linux" ] && command -v dpkg-deb >/dev/null 2>&1; then
+            dpkg-deb -I "$PKG"
+            dpkg-deb -c "$PKG" | sed -n '1,30p'
+          fi
+          if [ "$OS" = "macos" ]; then
+            hdiutil verify "$PKG"
+            hdiutil imageinfo "$PKG" | sed -n '1,20p'
+          fi
+          if [ "$OS" = "windows" ]; then
+            ls -lh "$PKG"
+            file "$PKG" 2>/dev/null || true
+          fi
+
+      # Log tail as annotations: the one thing that is readable about a failed
+      # job without opening the Actions UI.
+      - name: Show the build log on failure
+        if: failure()
+        shell: bash
+        run: |
+          if [ -f build.log ]; then
+            echo "::group::build.log (last 200 lines)"
+            tail -n 200 build.log || true
+            echo "::endgroup::"
+            grep -m 10 -E "ERROR|error:|Fatal|fatal|Traceback" build.log \
+              | sed 's/^/::error::/' || true
+          else
+            echo "::error::build.log was never created - the build step died before writing it"
+          fi
+          ls -la dist/ 2>/dev/null || true
+
+      - name: Upload artifact (binary + installer)
         uses: actions/upload-artifact@v4
         with:
           name: lofi-${{ matrix.target_os }}-${{ matrix.arch }}
@@ -295,6 +340,7 @@ jobs:
             dist/*setup.exe
           if-no-files-found: error
           retention-days: 30
+
 
   # --------------------------------------------------------------------- #
   # Publish GitHub Release — runs on tag pushes AND on main pushes after bump
@@ -358,16 +404,32 @@ jobs:
           path: release-dist
           merge-multiple: true
 
-      - name: List artifacts
+      - name: Verify every installer is real
         shell: bash
         run: |
-          ls -lhR release-dist/
+          set -uo pipefail
           VER="${{ steps.version.outputs.ver }}"
-          echo "--- 6-way matrix check (.deb/.dmg/-setup.exe) ---"
-          for f in lofi-${VER}-linux-amd64.deb lofi-${VER}-linux-arm64.deb lofi-${VER}-macos-amd64.dmg lofi-${VER}-macos-arm64.dmg lofi-${VER}-windows-amd64-setup.exe lofi-${VER}-windows-arm64-setup.exe; do
-            if [ -f "release-dist/$f" ]; then echo "✓ $f"; else echo "✗ MISSING $f" && ls release-dist/ && exit 1; fi
+          ls -lh release-dist/
+          echo "--- 6-way matrix presence + byte-level format check ---"
+          ARGS=()
+          MISSING=0
+          for f in lofi-${VER}-linux-amd64.deb lofi-${VER}-linux-arm64.deb \
+                   lofi-${VER}-macos-amd64.dmg lofi-${VER}-macos-arm64.dmg \
+                   lofi-${VER}-windows-amd64-setup.exe lofi-${VER}-windows-arm64-setup.exe; do
+            ARGS+=(--expect "$f")
+            if [ -f "release-dist/$f" ]; then
+              echo "present: $f"
+            else
+              echo "MISSING $f"
+              MISSING=1
+            fi
           done
-          echo "All 6 OS-native packages present."
+          if [ "$MISSING" = "1" ]; then
+            echo "::error::an artifact is missing; refusing to publish a partial release"
+            ls -l release-dist/
+            exit 1
+          fi
+          python scripts/verify_packages.py release-dist "${ARGS[@]}"
 
       - name: Generate checksums
         shell: bash
@@ -385,20 +447,63 @@ jobs:
             release-dist/*.deb
             release-dist/*.dmg
             release-dist/*setup.exe
+            release-dist/lofi-*-linux-amd64
+            release-dist/lofi-*-linux-arm64
+            release-dist/lofi-*-macos-amd64
+            release-dist/lofi-*-macos-arm64
+            release-dist/lofi-*-windows-amd64.exe
+            release-dist/lofi-*-windows-arm64.exe
             release-dist/SHA256SUMS.txt
           generate_release_notes: true
           fail_on_unmatched_files: false
           body: |
-            Lofi ${{ steps.version.outputs.ver }} — 6 native OS packages (auto-release on merge)
+            ## Lofi ${{ steps.version.outputs.ver }} — download and install
 
-            | OS | arch | package | how to install |
-            |---|---|---|---|
-            | Debian / Ubuntu | amd64 | `lofi-${{ steps.version.outputs.ver }}-linux-amd64.deb` | `sudo dpkg -i lofi-*.deb; sudo apt-get install -f` |
-            | Debian / Ubuntu | arm64 | `lofi-${{ steps.version.outputs.ver }}-linux-arm64.deb` | `sudo dpkg -i lofi-*.deb` (Raspberry Pi / Graviton) |
-            | macOS | amd64 (Intel) | `lofi-${{ steps.version.outputs.ver }}-macos-amd64.dmg` | open dmg, drag `lofi` to `/usr/local/bin` |
-            | macOS | arm64 (Apple Silicon) | `lofi-${{ steps.version.outputs.ver }}-macos-arm64.dmg` | open dmg, drag `lofi` |
-            | Windows | amd64 | `lofi-${{ steps.version.outputs.ver }}-windows-amd64-setup.exe` | run installer → `C:\Program Files\Lofi\lofi.exe` |
-            | Windows | arm64 | `lofi-${{ steps.version.outputs.ver }}-windows-arm64-setup.exe` | run installer |
+            Pick your OS. No Python needed: every package below contains the same
+            single-file binary, built on a runner with your CPU.
 
-            Auto-bumped patch +1 on merge to main (`${{ needs.prepare.outputs.old || 'unknown' }}` → `${{ steps.version.outputs.ver }}`). Tag `v${{ steps.version.outputs.ver }}`.
-            Also included: raw binaries + `SHA256SUMS.txt`. See `docs/PACKAGING.md`.
+            | OS | Download | Install |
+            |---|---|---|
+            | **Windows** (x64) | `lofi-${{ steps.version.outputs.ver }}-windows-amd64-setup.exe` | run it → `C:\Program Files\Lofi\lofi.exe`, on your PATH |
+            | **Windows** (ARM64) | `lofi-${{ steps.version.outputs.ver }}-windows-arm64-setup.exe` | run it |
+            | **macOS** (Apple Silicon) | `lofi-${{ steps.version.outputs.ver }}-macos-arm64.dmg` | open, run `Lofi.pkg` → `/usr/local/bin/lofi` |
+            | **macOS** (Intel) | `lofi-${{ steps.version.outputs.ver }}-macos-amd64.dmg` | open, run `Lofi.pkg` |
+            | **Debian / Ubuntu** (amd64) | `lofi-${{ steps.version.outputs.ver }}-linux-amd64.deb` | `sudo dpkg -i lofi-*.deb && sudo apt-get install -f` |
+            | **Debian / Ubuntu** (arm64) | `lofi-${{ steps.version.outputs.ver }}-linux-arm64.deb` | `sudo dpkg -i lofi-*.deb` (Pi, Graviton) |
+
+            Then, in every case:
+
+            ```bash
+            lofi --check                 # ffmpeg + libopus + token + data dir
+            LOFI_TOKEN=... lofi          # run it
+            ```
+
+            System dependencies that are **not** bundled (they are OS packages):
+
+            ```bash
+            sudo apt install ffmpeg libopus0     # Debian / Ubuntu
+            brew install ffmpeg opus             # macOS
+            winget install Gyan.FFmpeg           # Windows
+            ```
+
+            ### What each installer does
+
+            - **`.deb`** — binary to `/usr/local/bin/lofi`, a systemd unit (`lofi.service`,
+              installed but *not* enabled), a man page, and `/etc/lofi/lofi.env` for your token.
+              `sudo systemctl enable --now lofi` once the token is set. Uninstall: `sudo apt remove lofi`.
+            - **`.dmg`** — holds a `Lofi.pkg` installer (`pkgbuild`) plus the raw binary in
+              `portable/`. Uninstall: `sudo rm /usr/local/bin/lofi; sudo pkgutil --forget io.github.mob5824m-wq.lofi`.
+            - **`.exe`** — NSIS installer: Program Files, PATH entry, Start Menu shortcuts and an
+              entry under *Apps & features* with a working uninstaller.
+
+            Also published: the raw portable binaries (`lofi-linux-*`, `lofi-macos-*`,
+            `lofi-windows-*.exe`) for machines where you would rather not install anything, and
+            `SHA256SUMS.txt`:
+
+            ```bash
+            sha256sum -c SHA256SUMS.txt --ignore-missing
+            ```
+
+            Nothing here contains a bot token — pass `LOFI_TOKEN` at runtime.
+            Auto-released on merge to main (`${{ needs.prepare.outputs.old || 'unknown' }}` → `${{ steps.version.outputs.ver }}`);
+            full details in `docs/PACKAGING.md`.

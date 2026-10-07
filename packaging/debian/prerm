@@ -1,0 +1,15 @@
+#!/bin/sh
+# prerm for lofi — runs before the files are removed.
+set -e
+
+# Stop and disable the service first so the removal does not leave a unit
+# pointing at a binary that no longer exists. Upgrades do not stop the bot:
+# dpkg passes "upgrade" as $1 then, and we leave it running.
+if [ "$1" = "remove" ] || [ "$1" = "deconfigure" ]; then
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl stop lofi.service >/dev/null 2>&1 || true
+        systemctl disable lofi.service >/dev/null 2>&1 || true
+    fi
+fi
+
+exit 0

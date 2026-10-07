@@ -1,33 +1,71 @@
-# Debian / Ubuntu packaging — .deb
+# Debian / Ubuntu packaging — `.deb`
 
-Debian packages for `linux-amd64` and `linux-arm64`, built with `dpkg-deb`.
+Two packages are published, one per architecture, built with `dpkg-deb`:
 
 ```bash
-sudo dpkg -i lofi-1.0.0-linux-amd64.deb
-sudo apt-get install -f -y   # pulls ffmpeg, libopus0 if missing
-lofi --check                  # binary at /usr/local/bin/lofi
-LOFI_TOKEN=... lofi           # then lofi
-
-# arm64 (Raspberry Pi, Graviton)
-sudo dpkg -i lofi-1.0.0-linux-arm64.deb && sudo apt-get install -f -y
+sudo dpkg -i lofi-linux-amd64.deb && sudo apt-get install -f -y   # amd64
+sudo dpkg -i lofi-linux-arm64.deb && sudo apt-get install -f -y   # arm64: Pi, Graviton
+sudo apt install ffmpeg libopus0            # runtime deps, not bundled
+lofi --check                                # binary at /usr/local/bin/lofi
+LOFI_TOKEN=... lofi
 ```
 
-Package layout (`dpkg-deb -c`):
+## What is inside
+
 ```
-./usr/local/bin/lofi
-./usr/share/doc/lofi/README.md
-./usr/share/doc/lofi/config.example.json
-./DEBIAN/control  (Package: lofi, Architecture: amd64/arm64, Depends: ffmpeg, libopus0)
+DEBIAN/control                 Package, Version, Architecture, Depends
+DEBIAN/postinst|prerm|postrm   maintainer scripts
+usr/local/bin/lofi             0755, the PyInstaller one-file binary
+usr/share/lofi/                lofi.env, lofi.service, config.example.json
+usr/share/doc/lofi/            README.md, LICENSE, config.example.json, copyright
+usr/share/doc/lofi/examples/   lofi.env, lofi.service
+usr/share/man/man1/lofi.1.gz   man page
+lib/systemd/system/lofi.service
 ```
 
-System deps: `ffmpeg` decodes audio, `libopus0` encodes for voice. Both are
-found via `paths.opus_library()` — multiarch dirs, `LD_LIBRARY_PATH`, `LOFI_OPUS`.
+`Depends: ffmpeg, libopus0, ca-certificates`. **`python3` is not a dependency**:
+the binary carries its own interpreter, so adding it would install an
+interpreter the package never uses.
 
-Built on `ubuntu-22.04` (amd64) and `ubuntu-24.04-arm` (arm64) via
-`scripts/build.py` → `make_deb()` using `dpkg-deb --build`; on other OSes a
-placeholder `.deb` (zip with .deb extension + EMULATED.txt) is produced for naming inspection.
+The examples live in `/usr/share/lofi/` as well as `/usr/share/doc/`, because
+slim Debian/Ubuntu images configure `path-exclude=/usr/share/doc/*` in
+`/etc/dpkg/dpkg.cfg.d/` and the postinst needs the env file to exist.
 
-Docker:
+## Running it as a service
+
+The unit is installed **disabled** — the bot needs a token before it can start.
+
+```bash
+sudo useradd --system --home /var/lib/lofi --create-home --shell /usr/sbin/nologin lofi
+sudo editor /etc/lofi/lofi.env          # LOFI_TOKEN=...
+lofi --check
+sudo systemctl enable --now lofi
+journalctl -u lofi -f
+```
+
+The unit runs as the `lofi` user with `LOFI_HOME=/var/lib/lofi`
+(`ProtectSystem=full`, `PrivateDevices=true`, `NoNewPrivileges=true`). Drop
+`User=`/`Group=` from the unit if you would rather run it as root.
+
+## Templates
+
+`scripts/build.py` renders `@VERSION@`, `@ARCH@` and `@INSTALLED_SIZE@` into
+`control`, and copies the maintainer scripts as-is. **Debian `control` files do
+not allow `#` comments** — `dpkg-deb` fails with *field name '#' must be
+followed by colon* — so the notes about dependency choices live here instead.
+
+## Building and checking one
+
+```bash
+python scripts/build.py                     # → dist/lofi-<ver>-linux-<arch>.deb
+dpkg-deb -I dist/lofi-*.deb                 # control
+dpkg-deb -c dist/lofi-*.deb                 # contents
+python scripts/verify_packages.py dist/     # byte-level gate
+sudo dpkg -i dist/lofi-*.deb && sudo apt-get install -f -y
+```
+
+Docker (amd64, same as the `ubuntu-22.04` runner):
+
 ```dockerfile
 FROM python:3.11-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg libopus0 dpkg-dev \

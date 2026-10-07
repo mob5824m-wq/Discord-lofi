@@ -27,7 +27,7 @@ else
   PACKAGE  := lofi-$(VERSION)-$(OS)-$(ARCH).deb
 endif
 
-.PHONY: help build dist artifacts dist-all check clean venv install
+.PHONY: help build dist artifacts dist-all check verify clean venv install
 
 help:
 	@echo "Lofi $(VERSION) — 6 native OS packages (1 arm + 1 native per OS: .deb/.dmg/.exe)"
@@ -39,8 +39,9 @@ help:
 	@echo "  make build       PyInstaller binary + OS package for THIS host → dist/$(PACKAGE)"
 	@echo "  make dist        build + package (.deb/.dmg/.exe) for THIS host"
 	@echo "  make artifacts   show the 6-way matrix (no build)"
-	@echo "  make dist-all    emulate 6 packages locally by copying THIS binary 6× (inspection)"
+	@echo "  make dist-all    emulate 6 packages locally by copying THIS binary 6× (inspection only)"
 	@echo "  make check       run the built binary with --check"
+	@echo "  make verify      assert every package in dist/ is the real format"
 	@echo "  make clean       remove build/ dist/"
 	@echo ""
 	@echo "CI builds all 6 natively; see .github/workflows/release.yml"
@@ -61,6 +62,9 @@ build:
 dist: build
 	@echo "Package at dist/$(PACKAGE):"
 	@ls -lh dist/$(PACKAGE) 2>/dev/null || ls -lh dist/*.deb dist/*.dmg dist/*.exe 2>/dev/null | head -n 20
+
+verify:
+	@$(PY) scripts/verify_packages.py dist/
 
 artifacts:
 	@$(PY) scripts/build.py --all
