@@ -190,11 +190,20 @@ def test_apt_updates_bound_their_connections(workflow):
 
     A blackholed route to the mirror — the usual one is IPv6 to
     archive.ubuntu.com — waits out its own timeout per attempt, and with none
-    configured the step simply never returns.
+    configured the step simply never returns. ForceIPv4 and the Acquire
+    timeouts bound every connection; `timeout N apt-get` bounds the attempt as
+    a whole, so a mirror that accepts connections but never delivers cannot
+    hold the step either.
     """
     for job, block in WORKFLOWS[workflow].items():
         for command in re.findall(r"^.*apt-get.*update.*$", _join_continuations(block), re.MULTILINE):
+            if command.lstrip().startswith("echo "):
+                continue  # a message *about* apt-get, not a call to it
             assert "Acquire::http::Timeout" in command, (
                 f"{workflow}:{job}: apt-get update without Acquire::http::Timeout "
                 f"- a stalled mirror would hang it: {command.strip()}"
+            )
+            assert re.search(r"\btimeout\s+\d+\s+apt-get", command), (
+                f"{workflow}:{job}: apt-get update is not wrapped in `timeout N` "
+                f"- one stalled attempt would run to the step timeout: {command.strip()}"
             )
