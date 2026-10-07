@@ -1,0 +1,18 @@
+# Voice needs the extras: PyNaCl for encryption, and an ffmpeg binary on the
+# machine (see docs/INSTALL.md - 'pip install imageio-ffmpeg' works too).
+discord.py[voice]>=2.4.0
+aiohttp>=3.9
+
+# Station resolution. YouTube links go stale; keeping this current is the fix
+# for most "the station stopped working" reports.
+yt-dlp>=2024.10.7
+
+# Studio Lofi: the beats rendered on this machine. Optional - without it every
+# other station still works.
+numpy>=1.24
+
+# Optional: a bundled ffmpeg binary, found automatically when ffmpeg is not on
+# PATH (useful on Windows and macOS).
+# imageio-ffmpeg>=0.4.9
+
+# Tests and development tools are in requirements-dev.txt.

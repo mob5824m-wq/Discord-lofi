@@ -1,0 +1,46 @@
+# Secrets and state - never commit these
+# config.json is where a bot token and a dashboard key end up; the committed
+# template is config.example.json.
+config.json
+config.json.local
+data/
+*.db
+*.db-wal
+*.db-shm
+*.log
+
+# The bot token, if somebody keeps it beside the repo
+.env
+.env.*
+!.env.example
+
+# Local music library: large, personal, and not the repo's business
+music/*
+!music/README.md
+
+# Rendered audio cache
+cache/
+*.wav
+*.part
+
+# Node (the jsdom UI harness in tests/ui installs its own dependencies)
+node_modules/
+npm-debug.log*
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+build/
+dist/
+*.egg-info/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
