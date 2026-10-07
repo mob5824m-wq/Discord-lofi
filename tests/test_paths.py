@@ -197,6 +197,21 @@ def fake_libopus(tmp_path, monkeypatch, opus_not_loaded) -> Path:
     return target
 
 
+@pytest.fixture
+def no_other_libopus(monkeypatch):
+    """Pretend nothing else on this machine can satisfy the search.
+
+    CI installs ``libopus0`` so that the ``--check`` step has something to find,
+    which means on a runner a system directory holds a real library *and* the
+    last resort (``ctypes.util.find_library``) resolves. A test about rejection
+    would pass on a laptop with no libopus and fail there, for reasons that have
+    nothing to do with the code under test.
+    """
+    import ctypes.util
+
+    monkeypatch.setattr(ctypes.util, "find_library", lambda name: None)
+
+
 def test_opus_is_found_in_a_library_directory_that_is_not_on_path(fake_libopus):
     """The regression: `which libopus.so.0` finds nothing on a working install."""
     assert shutil.which("libopus.so.0") is None  # the search that used to be the only one
@@ -222,7 +237,7 @@ def test_ld_library_path_is_searched_first(monkeypatch, opus_not_loaded):
 
 
 def test_a_file_with_the_right_name_that_cannot_be_loaded_is_rejected(
-    tmp_path, monkeypatch, opus_not_loaded
+    tmp_path, monkeypatch, opus_not_loaded, no_other_libopus
 ):
     """A wrong-architecture library or a dangling symlink must not be reported
     as a working install: --check should never say "fine" and then have
@@ -232,7 +247,9 @@ def test_a_file_with_the_right_name_that_cannot_be_loaded_is_rejected(
     directory = tmp_path / "x86_64-linux-gnu"
     directory.mkdir()
     (directory / "libopus.so.0").write_text("this is not an ELF object")
-    monkeypatch.setenv("LD_LIBRARY_PATH", str(directory))
+    # Only the directory holding the bad file: the multiarch layout itself is
+    # what test_the_scan_covers_the_multiarch_directories pins down.
+    monkeypatch.setattr(paths, "_library_dirs", lambda: [directory])
     assert paths.opus_library() is None
 
 
@@ -251,7 +268,9 @@ def test_a_lofi_opus_that_cannot_be_opened_is_not_pretended_to_work(
     assert paths.opus_library() is None
 
 
-def test_nothing_is_reported_when_there_is_nothing_to_find(monkeypatch, opus_not_loaded):
+def test_nothing_is_reported_when_there_is_nothing_to_find(
+    monkeypatch, opus_not_loaded, no_other_libopus
+):
     monkeypatch.setattr(paths, "_library_dirs", lambda: [])
     monkeypatch.setattr(paths.shutil, "which", lambda name: None)
     monkeypatch.setenv("LD_LIBRARY_PATH", "")
