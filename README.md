@@ -39,7 +39,7 @@ OS-native installers. Pick your machine:
 | OS | Download | What the installer does |
 |---|---|---|
 | **Windows** x64 | [`lofi-windows-amd64-setup.exe`](https://github.com/mob5824m-wq/Discord-lofi/releases/latest/download/lofi-windows-amd64-setup.exe) | NSIS installer: `C:\Program Files\Lofi\lofi.exe`, added to PATH, Start Menu shortcuts, uninstaller in *Apps & features* |
-| **Windows** ARM64 | [`lofi-windows-arm64-setup.exe`](https://github.com/mob5824m-wq/Discord-lofi/releases/latest/download/lofi-windows-arm64-setup.exe) | same, for Windows on ARM |
+| **Windows** ARM64 | [`lofi-windows-arm64-setup.exe`](https://github.com/mob5824m-wq/Discord-lofi/releases/latest/download/lofi-windows-arm64-setup.exe) | same, for Windows on ARM — best effort: its runner cannot always install the Python dependencies, so this one is occasionally absent |
 | **macOS** Apple Silicon | [`lofi-macos-arm64.dmg`](https://github.com/mob5824m-wq/Discord-lofi/releases/latest/download/lofi-macos-arm64.dmg) | open the disk image, run `Lofi.pkg` to install `/usr/local/bin/lofi` |
 | **macOS** Intel | [`lofi-macos-amd64.dmg`](https://github.com/mob5824m-wq/Discord-lofi/releases/latest/download/lofi-macos-amd64.dmg) | same, for Intel Macs |
 | **Debian / Ubuntu** amd64 | [`lofi-linux-amd64.deb`](https://github.com/mob5824m-wq/Discord-lofi/releases/latest/download/lofi-linux-amd64.deb) | `dpkg` → `/usr/local/bin/lofi`, systemd unit (installed, not enabled), man page, `/etc/lofi/lofi.env` |

@@ -11,7 +11,7 @@ OS** on 6 GitHub-hosted runners and publishes them as OS-native installers.
 | macOS | **amd64** (Intel) | `lofi-<ver>-macos-amd64.dmg` (holds `Lofi-<ver>.pkg`) | `macos-15-intel` | `pkgbuild` + `hdiutil` |
 | macOS | **arm64** (Apple Silicon) | `lofi-<ver>-macos-arm64.dmg` | `macos-14` | `pkgbuild` + `hdiutil` |
 | Windows | **amd64** | `lofi-<ver>-windows-amd64-setup.exe` | `windows-2022` | NSIS `makensis` |
-| Windows | **arm64** | `lofi-<ver>-windows-arm64-setup.exe` | `windows-11-arm` | NSIS `makensis` (best effort) |
+| Windows | **arm64** | `lofi-<ver>-windows-arm64-setup.exe` | `windows-11-arm` | NSIS `makensis` — best effort, see below |
 
 Each installer is also published under a **short, unversioned name** —
 `lofi-linux-amd64.deb`, `lofi-macos-arm64.dmg`, `lofi-windows-amd64-setup.exe` —
@@ -165,6 +165,17 @@ sudo rm -f /usr/local/bin/lofi
 sudo rm -rf /usr/local/share/doc/lofi
 sudo pkgutil --forget io.github.mob5824m-wq.lofi
 ```
+
+### Windows ARM64 is best effort
+
+`windows-11-arm` cannot currently install the Python dependencies: pip finds no
+PyNaCl wheel for that interpreter and the source build dies with
+`[WinError 193] %1 is not a valid Win32 application`. Rather than let it block
+every release, that matrix entry is `continue-on-error` and the release job
+publishes without it. When it works, the ARM64 installer appears in the release
+like any other; when it does not, the other five still ship. The first thing to
+check is the preflight line at the top of `pip.log` in the job's diagnostics —
+it prints the interpreter's platform tag and the pip version doing the matching.
 
 ### Windows — `.exe` (NSIS)
 

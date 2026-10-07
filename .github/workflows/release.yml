@@ -45,7 +45,13 @@ permissions:
 # false every later release on that ref would queue behind it forever. Newer
 # wins.
 concurrency:
-  group: release-${{ github.ref }}
+  # github.workflow_sha is deliberate. A run whose job asks for a retired
+  # runner label is never picked up and sits queued until GitHub times it out
+  # (up to 24h), and every later release on that ref queues behind it. Including
+  # the workflow file's SHA means fixing this file - which is what you have to
+  # do when a label is retired - also starts a fresh group instead of queueing
+  # behind the run that can never finish.
+  group: release-${{ github.ref }}-${{ github.workflow_sha }}
   cancel-in-progress: true
 
 jobs:
@@ -251,11 +257,25 @@ jobs:
             Write-Host "ffmpeg install failed - the installer build does not need it (not fatal)"
           }
 
+      # shell: bash is not decoration. The default shell on a Windows runner is
+      # pwsh, and this step uses `set -o pipefail` / `tee` so the tail of a
+      # failed dependency install survives into the diagnostics step.
       - name: Install Python dependencies
+        shell: bash
         run: |
           set -o pipefail
-          python -m pip install --upgrade pip 2>&1 | tee pip.log
-          pip install -r requirements.txt pyinstaller 2>&1 | tee -a pip.log
+          # Preflight: which platform tag pip will match wheels against, and the
+          # pip that does the matching. A source build of PyNaCl on
+          # windows-11-arm fails with WinError 193, and the fix depends on
+          # whether the interpreter is arm64 and pip new enough to say so.
+          python -c "import sys, sysconfig; print('python', sys.version.split()[0], sysconfig.get_platform())" 2>&1 | tee pip.log
+          python -m pip install --upgrade pip 2>&1 | tee -a pip.log
+          pip --version | tee -a pip.log
+          # Prefer wheels on every platform: a source build here is a build of
+          # last resort (PyNaCl needs a working C toolchain), and on Windows
+          # ARM64 it fails outright.
+          pip install --only-binary=:all: -r requirements.txt pyinstaller 2>&1 | tee -a pip.log \
+            || pip install -r requirements.txt pyinstaller 2>&1 | tee -a pip.log
           pyinstaller --version
 
       - name: Resolve version
@@ -345,7 +365,7 @@ jobs:
             echo "::group::$log (last 120 lines)"
             tail -n 120 "$log"
             echo "::endgroup::"
-            grep -m 5 -E "error|Error|ERROR|Failed|failed|Traceback|No matching" "$log" \
+            grep -m 5 -E "error|Error|ERROR|Failed|failed|Traceback|No matching|^pip |^python " "$log" \
               | cut -c1-240 | sed 's/^/::error::/'
           done
           if [ "$FOUND" = "0" ]; then
@@ -496,7 +516,7 @@ jobs:
             | OS | Download | Install |
             |---|---|---|
             | **Windows** (x64) | `lofi-${{ steps.version.outputs.ver }}-windows-amd64-setup.exe` | run it → `C:\Program Files\Lofi\lofi.exe`, on your PATH |
-            | **Windows** (ARM64) | `lofi-${{ steps.version.outputs.ver }}-windows-arm64-setup.exe` | run it |
+            | **Windows** (ARM64) | `lofi-${{ steps.version.outputs.ver }}-windows-arm64-setup.exe` | run it — best effort: that runner cannot always install the Python deps, so this file is sometimes absent |
             | **macOS** (Apple Silicon) | `lofi-${{ steps.version.outputs.ver }}-macos-arm64.dmg` | open, run `Lofi.pkg` → `/usr/local/bin/lofi` |
             | **macOS** (Intel) | `lofi-${{ steps.version.outputs.ver }}-macos-amd64.dmg` | open, run `Lofi.pkg` |
             | **Debian / Ubuntu** (amd64) | `lofi-${{ steps.version.outputs.ver }}-linux-amd64.deb` | `sudo dpkg -i lofi-*.deb && sudo apt-get install -f` |
