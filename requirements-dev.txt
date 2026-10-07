@@ -3,3 +3,9 @@
 #   python3 -m pytest
 pytest>=8.0
 pytest-asyncio>=0.23
+
+# Packaging: 6 native binaries (debian/macos/windows × amd64/arm64)
+#   pip install pyinstaller
+#   python scripts/build.py --help
+pyinstaller>=6.0
+pyinstaller-hooks-contrib>=2024.0

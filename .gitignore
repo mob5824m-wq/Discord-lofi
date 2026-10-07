@@ -37,6 +37,9 @@ venv/
 .ruff_cache/
 build/
 dist/
+*.manifest
+*.pyinstaller/
+*.spec.bak
 *.egg-info/
 
 # Editors / OS
