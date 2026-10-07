@@ -109,7 +109,25 @@ jobs:
         env:
           LOFI_HOME: ${{ runner.temp }}/lofi-pytest
           LOFI_TOKEN: ci-dummy-token-not-used-for-anything
-        run: python -m pytest -ra
+        run: |
+          # pipefail so the tee cannot hide pytest's exit code.
+          set -o pipefail
+          python -m pytest -ra 2>&1 | tee pytest.log
+
+      # Which test failed has to be readable without downloading the log - one
+      # runner's log is not always reachable, and "Process completed with exit
+      # code 1" says nothing. Annotations ride with the check run, so they are
+      # visible in the UI summary and through the checks API. Same trick the
+      # release workflow uses for its build logs.
+      - name: Report test failures as annotations
+        if: failure()
+        run: |
+          [ -f pytest.log ] || exit 0
+          echo "::group::pytest output (last 120 lines)"
+          tail -n 120 pytest.log
+          echo "::endgroup::"
+          grep -E "^(FAILED|ERROR)" pytest.log | cut -c1-240 | sed 's/^/::error::/' || true
+          grep -m 3 -E "^(E  +|[A-Za-z_.]+Error|assert )" pytest.log | cut -c1-240 | sed 's/^/::error::/' || true
 
       - name: Packaging smoke (spec + 6-way matrix names)
         run: |
