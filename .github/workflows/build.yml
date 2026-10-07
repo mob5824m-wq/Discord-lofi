@@ -24,6 +24,12 @@ jobs:
   tests:
     name: pytest (Python ${{ matrix.python }})
     runs-on: ${{ matrix.runs-on }}
+    # Bound the job, and not only the steps: the failure that motivated this is
+    # a stalled apt mirror, which produces a job that sits there producing
+    # nothing for as long as GitHub allows (six hours by default) and looks
+    # exactly like a dead runner from the outside. Nothing in this job has any
+    # business taking 25 minutes.
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -49,9 +55,20 @@ jobs:
 
       # Voice needs an ffmpeg binary and libopus as a shared library; neither is
       # a Python package, and both are what `--check` exists to verify.
+      #
+      # The flags are the difference between a slow mirror and a hung job. A
+      # connection that goes nowhere (the classic one is an IPv6 route to
+      # archive.ubuntu.com that blackholes while the IPv4 one is fine) has to
+      # wait out its own timeout before apt retries - and with no bound anywhere
+      # that is a step which never returns. Bound every connection, force the
+      # family that works, retry, and let the timeouts be the backstop.
       - name: Install system audio dependencies
+        timeout-minutes: 10
+        env:
+          DEBIAN_FRONTEND: noninteractive
         run: |
-          sudo apt-get update
+          sudo apt-get -o Acquire::ForceIPv4=true -o Acquire::Retries=3 \
+                       -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
           sudo apt-get install -y --no-install-recommends ffmpeg libopus0
           ffmpeg -version | head -1
 
@@ -92,6 +109,10 @@ jobs:
   ui:
     name: dashboard UI (jsdom)
     runs-on: ubuntu-latest
+    # This is the job that hung on PR #7: half an hour inside `apt-get update`,
+    # no output, and the run kept its checks pending the whole time. A job
+    # timeout turns that into a failure someone can act on.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -105,8 +126,13 @@ jobs:
           node-version: "20"
 
       - name: Install system audio dependencies
+        timeout-minutes: 10
+        env:
+          DEBIAN_FRONTEND: noninteractive
         run: |
-          sudo apt-get update
+          # Same hardening as the tests job: see the note there.
+          sudo apt-get -o Acquire::ForceIPv4=true -o Acquire::Retries=3 \
+                       -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
           sudo apt-get install -y --no-install-recommends ffmpeg libopus0
 
       - name: Install Python dependencies
@@ -116,6 +142,7 @@ jobs:
 
       - name: Install jsdom
         working-directory: tests/ui
+        timeout-minutes: 10
         run: npm install --no-audit --no-fund
 
       # Demo mode needs no bot token and writes to a throwaway database, so

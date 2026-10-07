@@ -36,8 +36,13 @@ def _job_blocks(text: str) -> dict[str, str]:
 
     A job starts at a two-space-indented ``name:`` line with nothing after the
     colon; everything up to the next such line (or the next top-level key)
-    belongs to it. Comments and ``run: |`` bodies never match: their lines
-    either start with ``#`` or carry something after the colon.
+    belongs to it. ``run: |`` bodies never match: they carry something after
+    the colon.
+
+    Whole-line comments are dropped, so that a comment *about* a command cannot
+    satisfy a check for the command: "this job never runs pip install" must not
+    read as a job that runs it, and a note explaining why `apt-get update` needs
+    bounding must not read as an unbounded one.
     """
     blocks: dict[str, str] = {}
     current: str | None = None
@@ -55,7 +60,7 @@ def _job_blocks(text: str) -> dict[str, str]:
             current = match.group(1)
             blocks[current] = ""
             continue
-        if current is not None:
+        if current is not None and not line.lstrip().startswith("#"):
             blocks[current] += line + "\n"
     return blocks
 
@@ -71,6 +76,15 @@ RELEASE = WORKFLOWS["release.yml"]
 #: `cache: pip` / `cache: 'pip'` / `cache: "pip"` as a whole line.
 CACHE_PIP = re.compile(r"^\s*cache:\s*['\"]?pip['\"]?\s*$", re.MULTILINE)
 PIP_INSTALL = re.compile(r"\bpip install\b")
+
+
+def _join_continuations(text: str) -> str:
+    """Fold shell line continuations, so one command is one line.
+
+    A command split with a trailing backslash is still a single command, and
+    the flags that make it safe may well sit on the second line.
+    """
+    return re.sub(r"\\\n\s*", " ", text)
 
 #: The 6 installers a release must carry, spelled as the release job spells them.
 SIX_INSTALLERS = [
@@ -148,3 +162,39 @@ def test_release_requires_all_six_installers():
     """Five of six installers is a download page with a dead row on it."""
     for name in SIX_INSTALLERS:
         assert name in RELEASE["release"], f"{name} is not required by the release job"
+
+
+# --------------------------------------------------------------------------- #
+# nothing may hang forever: a stalled mirror has to fail, not sit there
+# --------------------------------------------------------------------------- #
+
+def test_every_job_has_a_timeout():
+    """A job with no timeout can sit for six hours producing nothing.
+
+    Not hypothetical: the jsdom job on PR #7 spent half an hour inside
+    ``apt-get update`` on a stalled mirror while the run's checks stayed
+    pending, and there was no output anywhere to say why. GitHub's default job
+    timeout is six hours, which is long enough for "slow" and "dead" to look
+    identical.
+    """
+    for workflow, jobs in WORKFLOWS.items():
+        for job, block in jobs.items():
+            assert re.search(r"^    timeout-minutes:\s*\d+\s*$", block, re.MULTILINE), (
+                f"{workflow}:{job} has no job-level timeout-minutes"
+            )
+
+
+@pytest.mark.parametrize("workflow", sorted(WORKFLOWS))
+def test_apt_updates_bound_their_connections(workflow):
+    """`apt-get update` with no bounds is a step that can hang on its own.
+
+    A blackholed route to the mirror — the usual one is IPv6 to
+    archive.ubuntu.com — waits out its own timeout per attempt, and with none
+    configured the step simply never returns.
+    """
+    for job, block in WORKFLOWS[workflow].items():
+        for command in re.findall(r"^.*apt-get.*update.*$", _join_continuations(block), re.MULTILINE):
+            assert "Acquire::http::Timeout" in command, (
+                f"{workflow}:{job}: apt-get update without Acquire::http::Timeout "
+                f"- a stalled mirror would hang it: {command.strip()}"
+            )

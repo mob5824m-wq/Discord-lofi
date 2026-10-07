@@ -277,8 +277,14 @@ jobs:
       # ------------------------------------------------------------------ #
       - name: Install system dependencies (Linux)
         if: runner.os == 'Linux'
+        # Same bound as the CI jobs in build.yml: a mirror that stalls must not
+        # eat the 45-minute job budget and turn into a release that never ships.
+        timeout-minutes: 10
+        env:
+          DEBIAN_FRONTEND: noninteractive
         run: |
-          sudo apt-get update
+          sudo apt-get -o Acquire::ForceIPv4=true -o Acquire::Retries=3 \
+                       -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
           sudo apt-get install -y --no-install-recommends ffmpeg libopus0 dpkg-dev
           ffmpeg -version | head -1
           dpkg-deb --version | head -1
