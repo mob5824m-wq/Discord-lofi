@@ -277,28 +277,14 @@ jobs:
       # ------------------------------------------------------------------ #
       - name: Install system dependencies (Linux)
         if: runner.os == 'Linux'
-        # Same bounds as the CI jobs in build.yml - a mirror that stalls must not
-        # eat the 45-minute job budget and turn into a release that never ships,
-        # and one that is briefly unreachable must not turn into one either.
+        # scripts/ci_apt_install.sh, same as the CI jobs in build.yml: a mirror
+        # that stalls must not turn into a release that never ships. (This step
+        # is where a red apt step costs the most, and where it has already cost
+        # one: v1.1.9's release was lost to a failure at the end of prepare, and
+        # the mirror has since failed jobs on four different runners.)
         timeout-minutes: 15
-        env:
-          DEBIAN_FRONTEND: noninteractive
         run: |
-          updated=0
-          for attempt in 1 2 3; do
-            if sudo timeout 240 apt-get -o Acquire::ForceIPv4=true -o Acquire::Retries=2 \
-                 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 update; then
-              updated=1
-              break
-            fi
-            echo "::warning::apt-get update attempt $attempt/3 did not finish in 240s"
-            sleep 10
-          done
-          if [ "$updated" != "1" ]; then
-            echo "::error::apt-get update did not complete in 3 attempts - the mirror is unreachable from this runner"
-            exit 1
-          fi
-          sudo apt-get install -y --no-install-recommends ffmpeg libopus0 dpkg-dev
+          sudo bash scripts/ci_apt_install.sh ffmpeg libopus0 dpkg-dev
           ffmpeg -version | head -1
           dpkg-deb --version | head -1
           ldconfig -p | grep -c opus || true
