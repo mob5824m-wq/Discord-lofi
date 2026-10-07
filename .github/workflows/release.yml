@@ -75,10 +75,25 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
+      # No `cache: pip` here, on purpose. This job never runs pip, so
+      # /home/runner/.cache/pip is never created - and setup-python's *post*
+      # step (cache-save, `post-if: success()`) then hard-fails the job:
+      #
+      #   Cache folder path is retrieved for pip but doesn't exist on disk:
+      #   /home/runner/.cache/pip. This likely indicates that there are no
+      #   dependencies to cache. Consider removing the cache step if it is not
+      #   needed.
+      #
+      # That is what killed the v1.1.9 release: the post step runs after the
+      # job body, so it landed *after* the bump commit and its tag had already
+      # been pushed, the job went red anyway, and build/release - which require
+      # prepare to succeed - were skipped. A pip directory restored from an
+      # earlier run papers over it (an existing-but-empty path passes the
+      # existence check, an absent one does not), so it fails intermittently.
+      # The interpreter is still pinned: the bump script runs on it.
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-          cache: pip
 
       - name: Bump version (+1 patch)
         id: bump
@@ -108,14 +123,46 @@ jobs:
           VER="${{ steps.bump.outputs.ver }}"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add VERSION
-          git commit -m "chore: bump version to $VER [skip ci]"
-          git push origin HEAD:main
-          git tag "v$VER"
-          git push origin "v$VER"
-          SHA=$(git rev-parse HEAD)
+
+          # Idempotent on purpose: a re-run of a failed run starts from the same
+          # commit as the first attempt, so main may already carry this version
+          # and the tag may already exist. Pushing both again would die on the
+          # tag collision ("tag 'v1.1.9' already exists") and skip the release a
+          # second time - which leaves recovering a flaky post step impossible
+          # without hand-editing VERSION on main. Read main as it is *now*, not
+          # as it was when this run started.
+          #
+          # (A fetch that fails is not fatal: the compare below then just uses
+          # the checkout's copy of main, which is what this step always did.)
+          git fetch --quiet origin main \
+            || echo "::warning::could not refresh origin/main; comparing against the checkout"
+          MAIN_VER=$(git show origin/main:VERSION 2>/dev/null | tr -d ' \n\r' || true)
+
+          if [ "$MAIN_VER" = "$VER" ]; then
+            echo "main is already at $VER (re-run); skipping the bump commit"
+            TAG_TARGET="origin/main"
+          else
+            git add VERSION
+            git commit -m "chore: bump version to $VER [skip ci]"
+            git push origin HEAD:main
+            TAG_TARGET="HEAD"
+          fi
+
+          if git rev-parse -q --verify "refs/tags/v$VER" >/dev/null; then
+            echo "tag v$VER already exists; leaving it where it is"
+          else
+            # Tag main's tip, not this checkout's HEAD: on a re-run the bump
+            # commit is already on main while HEAD is still the old commit, and
+            # a tag on the wrong commit publishes a release for the wrong tree.
+            git tag "v$VER" "$TAG_TARGET"
+            git push origin "v$VER"
+          fi
+
+          # target_commitish for the release job: the commit the tag actually
+          # points at, whichever of the paths above put it there.
+          SHA=$(git rev-parse "refs/tags/v$VER^{commit}" 2>/dev/null || git rev-parse HEAD)
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
-          echo "Pushed v$VER at $SHA"
+          echo "Released v$VER at $SHA"
 
   # --------------------------------------------------------------------- #
   # Build the 6 native binaries and wrap each in its OS-native installer.
@@ -133,7 +180,21 @@ jobs:
   # --------------------------------------------------------------------- #
   build:
     needs: prepare
-    if: always() && (needs.prepare.result == 'success' || needs.prepare.result == 'skipped') && github.actor != 'github-actions[bot]'
+    # Skipped only when there is genuinely nothing to build for: prepare died
+    # *before* it pushed the bump, so main still carries the old VERSION.
+    #
+    # A prepare that failed *after* the push (outputs.sha is set - the commit
+    # and its tag are out there) still gets its installers built. Without this,
+    # one flaky step at the end of prepare - a post step of a setup action, say
+    # - throws away an entire release even though main has already moved to a
+    # version the release page knows nothing about. See the v1.1.9 incident
+    # below: the bump landed, the tag landed, the release never did.
+    if: >-
+      always() &&
+      (needs.prepare.result == 'success' ||
+       needs.prepare.result == 'skipped' ||
+       needs.prepare.outputs.sha != '') &&
+      github.actor != 'github-actions[bot]'
     strategy:
       fail-fast: false
       matrix:
@@ -216,8 +277,27 @@ jobs:
       # ------------------------------------------------------------------ #
       - name: Install system dependencies (Linux)
         if: runner.os == 'Linux'
+        # Same bounds as the CI jobs in build.yml - a mirror that stalls must not
+        # eat the 45-minute job budget and turn into a release that never ships,
+        # and one that is briefly unreachable must not turn into one either.
+        timeout-minutes: 15
+        env:
+          DEBIAN_FRONTEND: noninteractive
         run: |
-          sudo apt-get update
+          updated=0
+          for attempt in 1 2 3; do
+            if sudo timeout 240 apt-get -o Acquire::ForceIPv4=true -o Acquire::Retries=2 \
+                 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 update; then
+              updated=1
+              break
+            fi
+            echo "::warning::apt-get update attempt $attempt/3 did not finish in 240s"
+            sleep 10
+          done
+          if [ "$updated" != "1" ]; then
+            echo "::error::apt-get update did not complete in 3 attempts - the mirror is unreachable from this runner"
+            exit 1
+          fi
           sudo apt-get install -y --no-install-recommends ffmpeg libopus0 dpkg-dev
           ffmpeg -version | head -1
           dpkg-deb --version | head -1
@@ -396,10 +476,10 @@ jobs:
   # --------------------------------------------------------------------- #
   release:
     # Run on tags, or on main after a successful prepare+bump, or on workflow_dispatch.
-    # needs.build.result must be exactly 'success': 'skipped' only happens when
-    # prepare failed after setting its version output (the build `if` then
-    # declines), and publishing from that state means a release with zero
-    # installers and a verify step that fails with no artifacts to verify.
+    # needs.build.result must be exactly 'success': 'skipped' means prepare died
+    # before it pushed a bump - there is no version on main to release, and
+    # publishing from that state means a release with zero installers and a
+    # verify step that fails with no artifacts to verify.
     if: |
       always() &&
       (startsWith(github.ref, 'refs/tags/v') || (github.ref == 'refs/heads/main' && needs.prepare.outputs.ver != '' ) || github.event_name == 'workflow_dispatch') &&

@@ -24,6 +24,12 @@ jobs:
   tests:
     name: pytest (Python ${{ matrix.python }})
     runs-on: ${{ matrix.runs-on }}
+    # Bound the job, and not only the steps: the failure that motivated this is
+    # a stalled apt mirror, which produces a job that sits there producing
+    # nothing for as long as GitHub allows (six hours by default) and looks
+    # exactly like a dead runner from the outside. Nothing in this job has any
+    # business taking 25 minutes.
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -49,9 +55,39 @@ jobs:
 
       # Voice needs an ffmpeg binary and libopus as a shared library; neither is
       # a Python package, and both are what `--check` exists to verify.
+      #
+      # Bounded twice over, because an unbounded `apt-get update` is what turned
+      # a stalled mirror into a job that produced nothing for half an hour with
+      # no explanation anywhere: each attempt is killed after 240s and the loop
+      # gives up after three. A mirror that is only briefly unreachable no
+      # longer fails the build, and one that is genuinely gone costs minutes
+      # instead of the job. ForceIPv4 plus the Acquire timeouts stop an
+      # individual connection (the classic culprit is a blackholed IPv6 route to
+      # archive.ubuntu.com while IPv4 works) from hanging in the first place.
+      #
+      # Verified against the runner that actually stalled: on this branch's
+      # first run after these flags went in, the Python 3.9 job's mirror stalled
+      # again and the step failed on its 10-minute timeout instead of hanging -
+      # bounded, but still red. Hence the retries.
       - name: Install system audio dependencies
+        timeout-minutes: 15
+        env:
+          DEBIAN_FRONTEND: noninteractive
         run: |
-          sudo apt-get update
+          updated=0
+          for attempt in 1 2 3; do
+            if sudo timeout 240 apt-get -o Acquire::ForceIPv4=true -o Acquire::Retries=2 \
+                 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 update; then
+              updated=1
+              break
+            fi
+            echo "::warning::apt-get update attempt $attempt/3 did not finish in 240s"
+            sleep 10
+          done
+          if [ "$updated" != "1" ]; then
+            echo "::error::apt-get update did not complete in 3 attempts - the mirror is unreachable from this runner"
+            exit 1
+          fi
           sudo apt-get install -y --no-install-recommends ffmpeg libopus0
           ffmpeg -version | head -1
 
@@ -73,7 +109,25 @@ jobs:
         env:
           LOFI_HOME: ${{ runner.temp }}/lofi-pytest
           LOFI_TOKEN: ci-dummy-token-not-used-for-anything
-        run: python -m pytest -ra
+        run: |
+          # pipefail so the tee cannot hide pytest's exit code.
+          set -o pipefail
+          python -m pytest -ra 2>&1 | tee pytest.log
+
+      # Which test failed has to be readable without downloading the log - one
+      # runner's log is not always reachable, and "Process completed with exit
+      # code 1" says nothing. Annotations ride with the check run, so they are
+      # visible in the UI summary and through the checks API. Same trick the
+      # release workflow uses for its build logs.
+      - name: Report test failures as annotations
+        if: failure()
+        run: |
+          [ -f pytest.log ] || exit 0
+          echo "::group::pytest output (last 120 lines)"
+          tail -n 120 pytest.log
+          echo "::endgroup::"
+          grep -E "^(FAILED|ERROR)" pytest.log | cut -c1-240 | sed 's/^/::error::/' || true
+          grep -m 3 -E "^(E  +|[A-Za-z_.]+Error|assert )" pytest.log | cut -c1-240 | sed 's/^/::error::/' || true
 
       - name: Packaging smoke (spec + 6-way matrix names)
         run: |
@@ -92,6 +146,10 @@ jobs:
   ui:
     name: dashboard UI (jsdom)
     runs-on: ubuntu-latest
+    # This is the job that hung on PR #7: half an hour inside `apt-get update`,
+    # no output, and the run kept its checks pending the whole time. A job
+    # timeout turns that into a failure someone can act on.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -105,8 +163,25 @@ jobs:
           node-version: "20"
 
       - name: Install system audio dependencies
+        timeout-minutes: 15
+        env:
+          DEBIAN_FRONTEND: noninteractive
         run: |
-          sudo apt-get update
+          # Same hardening as the tests job: see the note there.
+          updated=0
+          for attempt in 1 2 3; do
+            if sudo timeout 240 apt-get -o Acquire::ForceIPv4=true -o Acquire::Retries=2 \
+                 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 update; then
+              updated=1
+              break
+            fi
+            echo "::warning::apt-get update attempt $attempt/3 did not finish in 240s"
+            sleep 10
+          done
+          if [ "$updated" != "1" ]; then
+            echo "::error::apt-get update did not complete in 3 attempts - the mirror is unreachable from this runner"
+            exit 1
+          fi
           sudo apt-get install -y --no-install-recommends ffmpeg libopus0
 
       - name: Install Python dependencies
@@ -116,6 +191,7 @@ jobs:
 
       - name: Install jsdom
         working-directory: tests/ui
+        timeout-minutes: 10
         run: npm install --no-audit --no-fund
 
       # Demo mode needs no bot token and writes to a throwaway database, so
