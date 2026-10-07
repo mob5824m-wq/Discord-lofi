@@ -181,6 +181,13 @@ this was built on, longer on a Pi 3. The render is cached by content hash, so th
 per mood per machine; on a small board, prefer the library and stream stations, or play a mood once
 and let the cache do the rest.
 
+**Windows on ARM** is the one arm64 platform with a different install file. `discord.py[voice]`
+cannot resolve there (it pins `PyNaCl<1.6`, and PyNaCl only publishes `win_arm64` wheels from
+1.6.0; the extra's `davey` publishes no `win_arm64` wheels at all), so use
+`requirements-winarm.txt` instead of `requirements.txt`, with Python 3.12+ (numpy ships no
+`win_arm64` wheels for 3.11). Same voice stack minus the pins that do not exist for the platform —
+or just install the `lofi-windows-arm64-setup.exe` package and skip all of it.
+
 ---
 
 ## Getting the code
@@ -207,6 +214,10 @@ numpy>=1.24
 `discord.py[voice]` (the extra, not the bare package) is what pulls in PyNaCl for voice encryption.
 `imageio-ffmpeg` is commented out in that file — install it only if your platform has no ffmpeg
 package, and the bot will find its bundled binary on its own.
+
+**Windows on ARM**: `pip install -r requirements-winarm.txt` instead — the `[voice]` extra cannot
+install there (see the file's header for why), and you want Python 3.12+. The voice stack is the
+same; only the impossible pins are skipped.
 
 Then the config:
 

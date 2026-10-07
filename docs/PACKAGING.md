@@ -11,7 +11,7 @@ OS** on 6 GitHub-hosted runners and publishes them as OS-native installers.
 | macOS | **amd64** (Intel) | `lofi-<ver>-macos-amd64.dmg` (holds `Lofi-<ver>.pkg`) | `macos-15-intel` | `pkgbuild` + `hdiutil` |
 | macOS | **arm64** (Apple Silicon) | `lofi-<ver>-macos-arm64.dmg` | `macos-14` | `pkgbuild` + `hdiutil` |
 | Windows | **amd64** | `lofi-<ver>-windows-amd64-setup.exe` | `windows-2022` | NSIS `makensis` |
-| Windows | **arm64** | `lofi-<ver>-windows-arm64-setup.exe` | `windows-11-arm` | NSIS `makensis` — best effort, see below |
+| Windows | **arm64** | `lofi-<ver>-windows-arm64-setup.exe` | `windows-11-arm` | NSIS `makensis` — `requirements-winarm.txt`, see below |
 
 Each installer is also published under a **short, unversioned name** —
 `lofi-linux-amd64.deb`, `lofi-macos-arm64.dmg`, `lofi-windows-amd64-setup.exe` —
@@ -166,16 +166,26 @@ sudo rm -rf /usr/local/share/doc/lofi
 sudo pkgutil --forget io.github.mob5824m-wq.lofi
 ```
 
-### Windows ARM64 is best effort
+### Windows ARM64
 
-`windows-11-arm` cannot currently install the Python dependencies: pip finds no
-PyNaCl wheel for that interpreter and the source build dies with
-`[WinError 193] %1 is not a valid Win32 application`. Rather than let it block
-every release, that matrix entry is `continue-on-error` and the release job
-publishes without it. When it works, the ARM64 installer appears in the release
-like any other; when it does not, the other five still ship. The first thing to
-check is the preflight line at the top of `pip.log` in the job's diagnostics —
-it prints the interpreter's platform tag and the pip version doing the matching.
+`windows-11-arm` installs its Python dependencies from
+`requirements-winarm.txt`, not `requirements.txt`. The `[voice]` extra cannot
+resolve on that platform at all: it pins `PyNaCl<1.6`, and PyNaCl publishes no
+win_arm64 wheels before 1.6.0 (the 1.5.x source build dies with
+`[WinError 193] %1 is not a valid Win32 application` — the image has no ARM64 C
+toolchain), and the extra's other package, `davey`, publishes no win_arm64
+wheels at any version. `requirements-winarm.txt` spells out the same voice
+stack with the pins that do exist for the platform: `discord.py` without the
+extra plus `PyNaCl>=1.6` (same `nacl` module, so voice encryption works).
+`davey` is skipped — discord.py treats both packages as optional at import
+time (`has_nacl` / `has_dave`) and falls back from the DAVE E2EE protocol to
+the classic voice protocol. The matrix entry pins Python 3.12 because numpy
+publishes no win_arm64 wheels for 3.11 at any version. With both moves every
+dependency installs from a wheel, and the job is a full member of the 6-way
+matrix — nothing about it is best-effort. The first thing to check if a
+dependency ever fails to install is the preflight line at the top of `pip.log`
+in the job's diagnostics — it prints the interpreter's platform tag and the pip
+version doing the matching.
 
 ### Windows — `.exe` (NSIS)
 
@@ -211,10 +221,10 @@ Gyan.FFmpeg`, and `lofi --check` will say so if it is missing.
    annotations so they are visible without opening the log.
 3. **`release`** — downloads everything, re-verifies them with
    `scripts/verify_packages.py`, writes `SHA256SUMS.txt`, and publishes the
-   GitHub Release with install instructions. Windows ARM64 is marked
-   `continue-on-error` in the matrix: if its toolchain cannot install the Python
-   dependencies, the other five still ship and the missing installer is reported
-   instead of blocking the release.
+   GitHub Release with install instructions. All six installers are required —
+   including `windows-arm64`, which installs its deps from
+   `requirements-winarm.txt` (see above). If any build job fails, the release
+   job does not run and nothing is published.
 
 ```bash
 # merge a PR to main  → 1.0.1 → 1.0.2 → Release v1.0.2 with 6 installers

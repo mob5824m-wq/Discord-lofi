@@ -1,5 +1,10 @@
 # Voice needs the extras: PyNaCl for encryption, and an ffmpeg binary on the
 # machine (see docs/INSTALL.md - 'pip install imageio-ffmpeg' works too).
+#
+# Windows-on-ARM users: this file cannot install there (the [voice] extra pins
+# PyNaCl<1.6, which has no win_arm64 wheels). Use requirements-winarm.txt
+# instead — same voice stack, minus the pins that do not exist for that
+# platform. CI does the same for the windows-11-arm build.
 discord.py[voice]>=2.4.0
 aiohttp>=3.9
 

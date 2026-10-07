@@ -144,7 +144,6 @@ jobs:
             arch: amd64
             artifact: lofi-linux-amd64
             runner_note: debian amd64 (.deb)
-            optional: false
 
           - os: ubuntu-24.04-arm
             py: "3.11"
@@ -152,7 +151,6 @@ jobs:
             arch: arm64
             artifact: lofi-linux-arm64
             runner_note: debian arm64 (.deb) — Raspberry Pi / Graviton
-            optional: false
 
           - os: macos-15-intel
             py: "3.11"
@@ -160,7 +158,6 @@ jobs:
             arch: amd64
             artifact: lofi-macos-amd64
             runner_note: mac intel (.dmg)
-            optional: false
 
           - os: macos-14
             py: "3.11"
@@ -168,7 +165,6 @@ jobs:
             arch: arm64
             artifact: lofi-macos-arm64
             runner_note: mac apple silicon (.dmg)
-            optional: false
 
           - os: windows-2022
             py: "3.11"
@@ -176,23 +172,22 @@ jobs:
             arch: amd64
             artifact: lofi-windows-amd64.exe
             runner_note: windows amd64 (.exe NSIS installer)
-            optional: false
 
-          # Best-effort: Windows-on-ARM is real but niche, and its toolchain
-          # sometimes cannot install the Python deps. `continue-on-error` keeps
-          # it visible without blocking the other five; the release job drops it
-          # when it is missing rather than publishing nothing at all.
+          # Windows-on-ARM gets its own requirements file (requirements-winarm.txt)
+          # and Python 3.12: discord.py[voice] pins PyNaCl<1.6 and PyNaCl only
+          # publishes win_arm64 wheels from 1.6.0 (and `davey` publishes none at
+          # all), and numpy publishes no win_arm64 wheels for Python 3.11 at any
+          # version. With those two moves every dependency installs from wheels
+          # on this runner.
           - os: windows-11-arm
-            py: "3.11"
+            py: "3.12"
             target_os: windows
             arch: arm64
             artifact: lofi-windows-arm64.exe
             runner_note: windows arm64 (.exe NSIS installer)
-            optional: true
 
     name: build ${{ matrix.target_os }}-${{ matrix.arch }} (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    continue-on-error: ${{ matrix.optional }}
     timeout-minutes: 45
 
     steps:
@@ -265,17 +260,26 @@ jobs:
         run: |
           set -o pipefail
           # Preflight: which platform tag pip will match wheels against, and the
-          # pip that does the matching. A source build of PyNaCl on
-          # windows-11-arm fails with WinError 193, and the fix depends on
-          # whether the interpreter is arm64 and pip new enough to say so.
+          # pip that does the matching. If a dependency ever has to be built from
+          # source here, this says which interpreter was doing it.
           python -c "import sys, sysconfig; print('python', sys.version.split()[0], sysconfig.get_platform())" 2>&1 | tee pip.log
           python -m pip install --upgrade pip 2>&1 | tee -a pip.log
           pip --version | tee -a pip.log
+          # Windows-on-ARM installs from requirements-winarm.txt: the [voice]
+          # extra in requirements.txt pins PyNaCl<1.6 and PyNaCl publishes no
+          # win_arm64 wheels before 1.6.0 (and `davey` publishes none at all),
+          # so that extra cannot resolve on this platform. See the header of
+          # requirements-winarm.txt for the full story.
+          REQ="requirements.txt"
+          if [ "${{ matrix.target_os }}" = "windows" ] && [ "${{ matrix.arch }}" = "arm64" ]; then
+            REQ="requirements-winarm.txt"
+          fi
+          echo "Requirements file: $REQ" | tee -a pip.log
           # Prefer wheels on every platform: a source build here is a build of
           # last resort (PyNaCl needs a working C toolchain), and on Windows
           # ARM64 it fails outright.
-          pip install --only-binary=:all: -r requirements.txt pyinstaller 2>&1 | tee -a pip.log \
-            || pip install -r requirements.txt pyinstaller 2>&1 | tee -a pip.log
+          pip install --only-binary=:all: -r "$REQ" pyinstaller 2>&1 | tee -a pip.log \
+            || pip install -r "$REQ" pyinstaller 2>&1 | tee -a pip.log
           pyinstaller --version
 
       - name: Resolve version
@@ -458,21 +462,21 @@ jobs:
           echo "--- 6-way matrix presence + byte-level format check ---"
           ARGS=()
           MISSING=0
-          # windows-arm64 is best-effort (continue-on-error in the matrix): a
-          # missing ARM64 installer is reported, a missing anything else is fatal.
+          # All six are required — including windows-arm64, which installs its
+          # deps from requirements-winarm.txt. A zip renamed to .deb installs
+          # nothing and looks identical to a real one on the release page, so
+          # nothing is published unless every installer is present and real.
           REQUIRED="lofi-${VER}-linux-amd64.deb lofi-${VER}-linux-arm64.deb \
                     lofi-${VER}-macos-amd64.dmg lofi-${VER}-macos-arm64.dmg \
-                    lofi-${VER}-windows-amd64-setup.exe"
-          OPTIONAL="lofi-${VER}-windows-arm64-setup.exe"
-          for f in $REQUIRED $OPTIONAL; do
+                    lofi-${VER}-windows-amd64-setup.exe \
+                    lofi-${VER}-windows-arm64-setup.exe"
+          for f in $REQUIRED; do
             if [ -f "release-dist/$f" ]; then
               echo "present: $f"
               ARGS+=(--expect "$f")
-            elif echo "$REQUIRED" | grep -qw "$f"; then
+            else
               echo "MISSING (required) $f"
               MISSING=1
-            else
-              echo "absent (optional, skipped): $f"
             fi
           done
           if [ "$MISSING" = "1" ]; then
@@ -516,7 +520,7 @@ jobs:
             | OS | Download | Install |
             |---|---|---|
             | **Windows** (x64) | `lofi-${{ steps.version.outputs.ver }}-windows-amd64-setup.exe` | run it → `C:\Program Files\Lofi\lofi.exe`, on your PATH |
-            | **Windows** (ARM64) | `lofi-${{ steps.version.outputs.ver }}-windows-arm64-setup.exe` | run it — best effort: that runner cannot always install the Python deps, so this file is sometimes absent |
+            | **Windows** (ARM64) | `lofi-${{ steps.version.outputs.ver }}-windows-arm64-setup.exe` | run it → `C:\Program Files\Lofi\lofi.exe`, on your PATH |
             | **macOS** (Apple Silicon) | `lofi-${{ steps.version.outputs.ver }}-macos-arm64.dmg` | open, run `Lofi.pkg` → `/usr/local/bin/lofi` |
             | **macOS** (Intel) | `lofi-${{ steps.version.outputs.ver }}-macos-amd64.dmg` | open, run `Lofi.pkg` |
             | **Debian / Ubuntu** (amd64) | `lofi-${{ steps.version.outputs.ver }}-linux-amd64.deb` | `sudo dpkg -i lofi-*.deb && sudo apt-get install -f` |
