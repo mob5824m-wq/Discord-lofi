@@ -256,6 +256,35 @@ git tag v1.2.0 && git push origin v1.2.0          # cut a specific version
 gh workflow run release --ref main -f version=1.3.0 -f bump=minor
 ```
 
+### When a release does not appear
+
+`prepare` pushes the bump commit and its tag in one step, so a failure that
+happens *after* that push — a setup action's post step, a blip on the tag push —
+leaves `main` on a version whose release page is empty. Two things now keep that
+from costing a release:
+
+- `build` runs for a `prepare` that failed **after** it published the bump
+  (`needs.prepare.outputs.sha` is set), so the installers are still built and the
+  release still happens. A `prepare` that failed *before* the push leaves `main`
+  untouched and is not built for: there is nothing to release, and the next
+  merged PR bumps from the version that is actually there.
+- **Re-running the failed run is safe and is the intended recovery.** The push
+  step re-reads `main` first and skips whatever is already done, so a re-run
+  cannot create a second bump commit for the same version, cannot collide with
+  the tag it pushed last time (`fatal: tag 'vX.Y.Z' already exists`, which is how
+  a flaky post step used to become unrecoverable), and cannot move an existing
+  tag to a different commit. It picks up the tag that is already there and
+  republishes from it.
+
+The v1.1.9 release was lost to exactly this: `prepare` asked
+`actions/setup-python` for a `pip` cache although the job never runs `pip`, and
+the action's post step (cache-save) refuses to save a cache directory that does
+not exist — `/home/runner/.cache/pip`, absent precisely because nothing ran pip.
+It fired after the job body, i.e. after the bump was pushed, the job went red,
+and `build`/`release` were skipped. The cache is gone from that job, and
+`tests/test_release_workflow.py` fails if it comes back or if any job caches
+`pip` without ever running `pip`.
+
 ### Runner image retirement
 
 If GitHub retires an image, replace it with the nearest equivalent. The Intel
