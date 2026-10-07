@@ -1,0 +1,56 @@
+Lofi @VERSION@ — macOS (@ARCH@)
+
+WHAT THIS IS
+  Lofi is a Discord bot that joins a voice channel and plays lofi
+  continuously. It also serves a small web dashboard for controlling it.
+  This disk image contains:
+
+    Lofi-@VERSION@.pkg   double-click installer → /usr/local/bin/lofi
+    portable/lofi        the same binary, to copy anywhere you like
+    LICENSE, README.md   the docs
+
+INSTALL (recommended — the .pkg)
+  1. Double-click "Lofi-@VERSION@.pkg".
+     macOS will say it is from an unidentified developer: this build is not
+     signed with an Apple Developer ID. Control-click the .pkg and choose
+     Open if the first attempt is blocked.
+  2. The installer puts the binary at /usr/local/bin/lofi.
+  3. Install the two system dependencies (they are not bundled):
+
+       brew install ffmpeg opus
+
+  4. Check the machine, then run it:
+
+       LOFI_TOKEN=your-bot-token lofi --check
+       LOFI_TOKEN=your-bot-token lofi
+
+INSTALL (manual — no installer)
+  Drag "portable/lofi" into /usr/local/bin (or anywhere on your PATH), then:
+
+    chmod +x /usr/local/bin/lofi
+    LOFI_TOKEN=... lofi --check
+
+FIRST RUN NOTES
+  Gatekeeper: unsigned downloads are quarantined. If macOS refuses to run the
+  binary, clear the quarantine attribute instead of disabling Gatekeeper:
+
+    xattr -dr com.apple.quarantine /usr/local/bin/lofi
+
+  The dashboard is bound to 127.0.0.1:8790 by default and needs a key; the bot
+  prints how to get it on startup. Read docs/SETUP.md before exposing it.
+
+  Data (config.json, lofi.db, cache) lives in
+  ~/Library/Application Support/lofi unless you set LOFI_HOME.
+
+UNINSTALL
+  The .pkg installs a single file plus docs:
+
+    sudo rm -f /usr/local/bin/lofi
+    sudo rm -rf /usr/local/share/doc/lofi
+    pkgutil --forget io.github.mob5824m-wq.lofi   # forget the receipt
+
+  Your data directory is left in place on purpose.
+
+CPU
+  @ARCH@ build. Intel Macs use the amd64 image, Apple Silicon the arm64 one.
+  Pick the one matching `uname -m`.

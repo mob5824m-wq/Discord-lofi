@@ -2,6 +2,12 @@
 """
 Emulate the 6 release artifacts locally from the binary we can actually build.
 
+Everything produced here is marked EMULATED and is NOT installable: only the
+package matching this host is a real native build. It exists so you can check
+file names, sizes and checksums without owning six machines — the real
+artifacts come out of .github/workflows/release.yml, and
+scripts/verify_packages.py rejects anything this script produced.
+
 PyInstaller cannot cross-compile: an amd64 Linux host cannot emit an arm64
 macOS binary. CI solves that with 6 native runners. For local inspection this
 script copies the one binary we *did* build into all 6 expected places and
@@ -123,17 +129,17 @@ def main() -> int:
         source_for_pkg = ver_dst if ver_dst.exists() else dst
         try:
             if os_name == "linux" and make_deb:
-                pkg = make_deb(source_for_pkg, arch, VERSION)
+                pkg = make_deb(source_for_pkg, arch, VERSION, allow_placeholder=True)
                 for cand in (DIST / package_name("linux", arch, VERSION), DIST / package_short("linux", arch)):
                     if cand.exists():
                         packages.append(cand)
             elif os_name == "macos" and make_dmg:
-                pkg = make_dmg(source_for_pkg, arch, VERSION)
+                pkg = make_dmg(source_for_pkg, arch, VERSION, allow_placeholder=True)
                 for cand in (DIST / package_name("macos", arch, VERSION), DIST / package_short("macos", arch)):
                     if cand.exists():
                         packages.append(cand)
             elif os_name == "windows" and make_windows_installer:
-                pkg = make_windows_installer(source_for_pkg, arch, VERSION)
+                pkg = make_windows_installer(source_for_pkg, arch, VERSION, allow_placeholder=True)
                 for cand in (DIST / package_name("windows", arch, VERSION), DIST / package_short("windows", arch)):
                     if cand.exists():
                         packages.append(cand)

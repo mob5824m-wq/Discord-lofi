@@ -66,7 +66,10 @@ from player import PlayerError, PlayerManager
 
 logger = logging.getLogger("lofi.bot")
 
-VERSION = "1.0.0"
+# Read from the VERSION file (bundled into the binary by lofi.spec) so an
+# installed build reports the version it was actually released as. A hardcoded
+# string here drifts the moment scripts/bump_version.py runs.
+VERSION = paths.app_version()
 MIN_PYTHON = (3, 9)
 #: Rotating log: 5 MB x 3, in the data directory next to the database.
 LOG_MAX_BYTES = 5 * 1024 * 1024

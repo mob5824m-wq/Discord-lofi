@@ -1,0 +1,125 @@
+.TH LOFI 1 "@DATE@" "lofi @VERSION@" "User Commands"
+.SH NAME
+lofi \- Discord bot that plays lofi in a voice channel, with a web dashboard
+.SH SYNOPSIS
+.B lofi
+[\fB\-\-check\fR]
+[\fB\-\-demo\fR]
+[\fB\-\-dashboard\-token\fR]
+[\fB\-\-no\-dashboard\fR]
+[\fB\-\-dashboard\-host\fR \fIHOST\fR]
+[\fB\-\-dashboard\-port\fR \fIPORT\fR]
+[\fB\-\-sync\-commands\fR]
+[\fB\-\-log\-level\fR \fILEVEL\fR]
+[\fB\-\-logfile\fR \fIPATH\fR]
+[\fB\-\-version\fR]
+.SH DESCRIPTION
+.B lofi
+joins a voice channel in a Discord server and plays lofi continuously. It also
+serves a token\-authenticated web dashboard on \fB127.0.0.1:8790\fR for
+transport control, per\-server settings, stations and history.
+.PP
+Audio can come from YouTube broadcasts, SomaFM radio streams, your own
+\fBmusic/\fR directory, or
+.B Studio Lofi
+beats rendered locally. The last two work with no network connection.
+.PP
+The bot token is read from the \fBLOFI_TOKEN\fR environment variable or from
+\fIconfig.json\fR in the data directory. It is never bundled in the package.
+.SH OPTIONS
+.TP
+.B \-\-check
+Diagnose the install and exit: reports whether \fBffmpeg\fR and
+\fBlibopus\fR are found, where the data directory resolves to, and whether a
+token is configured. Does not connect to Discord.
+.TP
+.B \-\-demo
+Serve the dashboard with three simulated servers. No token and no Discord
+connection required.
+.TP
+.B \-\-dashboard\-token
+Print the dashboard login key and exit.
+.TP
+.B \-\-no\-dashboard
+Run the bot without serving the web dashboard.
+.TP
+.B \-\-dashboard\-host \fIHOST\fR
+Bind the dashboard to \fIHOST\fR instead of the configured value.
+.TP
+.B \-\-dashboard\-port \fIPORT\fR
+Bind the dashboard to \fIPORT\fR instead of the configured value.
+.TP
+.B \-\-sync\-commands
+Publish the slash command tree to Discord and exit.
+.TP
+.B \-\-log\-level \fILEVEL\fR
+Logging verbosity: DEBUG, INFO, WARNING, ERROR.
+.TP
+.B \-\-logfile \fIPATH\fR
+Write logs to \fIPATH\fR instead of the data directory.
+.TP
+.B \-\-version
+Print the version and exit.
+.SH ENVIRONMENT
+.TP
+.B LOFI_TOKEN
+The Discord bot token. Required unless it is set in \fIconfig.json\fR.
+.TP
+.B LOFI_HOME
+Data directory for \fIconfig.json\fR, \fIlofi.db\fR and the audio cache.
+Defaults to the platform state directory. Set this when running as a service.
+.TP
+.B LOFI_DASHBOARD_TOKEN
+Overrides the dashboard key so it never touches disk.
+.TP
+.B LOFI_OPUS
+Explicit path to the libopus shared library, if auto\-detection fails.
+.SH FILES
+.TP
+.I /usr/local/bin/lofi
+The single\-file binary.
+.TP
+.I /etc/lofi/lofi.env
+Environment file for the systemd unit, created from the packaged example
+(mode 0600). Holds \fBLOFI_TOKEN\fR.
+.TP
+.I /lib/systemd/system/lofi.service
+systemd unit, installed disabled.
+.TP
+.I /var/lib/lofi
+Default \fBLOFI_HOME\fR when running under systemd.
+.SH EXAMPLES
+.PP
+Check the machine before the first run:
+.PP
+.RS
+.nf
+$ lofi \-\-check
+.fi
+.RE
+.PP
+Run the bot with the token in the environment:
+.PP
+.RS
+.nf
+$ LOFI_TOKEN=... lofi
+.fi
+.RE
+.PP
+Run it as a service:
+.PP
+.RS
+.nf
+$ sudo systemctl enable \-\-now lofi
+$ journalctl \-u lofi \-f
+.fi
+.RE
+.SH SEE ALSO
+.BR systemctl (1),
+.BR ffmpeg (1)
+.PP
+Project documentation:
+.UR https://github.com/mob5824m-wq/Discord-lofi
+.UE
+.SH AUTHOR
+Lofi contributors.

@@ -31,45 +31,57 @@ is throttled, or on a box with no internet at all.
 
 ---
 
-## Downloads — 6 native OS packages
+## Download — install without Python
 
-No Python needed — each release ships **6 artifacts: 1 arm + 1 native for each
-OS** as OS-native installers (`.deb` / `.dmg` / `.exe`), each containing a
-PyInstaller single-file binary from [`lofi.spec`](lofi.spec):
+Every release is built by GitHub Actions on 6 native runners and published as
+OS-native installers. Pick your machine:
 
-| OS | amd64 (native) | arm64 |
+| OS | Download | What the installer does |
 |---|---|---|
-| **Debian / Ubuntu** | `lofi-1.0.0-linux-amd64.deb` | `lofi-1.0.0-linux-arm64.deb` |
-| **macOS** | `lofi-1.0.0-macos-amd64.dmg` (Intel) | `lofi-1.0.0-macos-arm64.dmg` (Apple Silicon) |
-| **Windows** | `lofi-1.0.0-windows-amd64-setup.exe` (NSIS installer) | `lofi-1.0.0-windows-arm64-setup.exe` (NSIS) |
+| **Windows** x64 | [`lofi-windows-amd64-setup.exe`](https://github.com/mob5824m-wq/Discord-lofi/releases/latest/download/lofi-windows-amd64-setup.exe) | NSIS installer: `C:\Program Files\Lofi\lofi.exe`, added to PATH, Start Menu shortcuts, uninstaller in *Apps & features* |
+| **Windows** ARM64 | [`lofi-windows-arm64-setup.exe`](https://github.com/mob5824m-wq/Discord-lofi/releases/latest/download/lofi-windows-arm64-setup.exe) | same, for Windows on ARM |
+| **macOS** Apple Silicon | [`lofi-macos-arm64.dmg`](https://github.com/mob5824m-wq/Discord-lofi/releases/latest/download/lofi-macos-arm64.dmg) | open the disk image, run `Lofi.pkg` to install `/usr/local/bin/lofi` |
+| **macOS** Intel | [`lofi-macos-amd64.dmg`](https://github.com/mob5824m-wq/Discord-lofi/releases/latest/download/lofi-macos-amd64.dmg) | same, for Intel Macs |
+| **Debian / Ubuntu** amd64 | [`lofi-linux-amd64.deb`](https://github.com/mob5824m-wq/Discord-lofi/releases/latest/download/lofi-linux-amd64.deb) | `dpkg` → `/usr/local/bin/lofi`, systemd unit (installed, not enabled), man page, `/etc/lofi/lofi.env` |
+| **Debian / Ubuntu** arm64 | [`lofi-linux-arm64.deb`](https://github.com/mob5824m-wq/Discord-lofi/releases/latest/download/lofi-linux-arm64.deb) | same, for Raspberry Pi / Graviton |
 
-Raw portable binaries `lofi-linux-*` / `lofi-macos-*` / `lofi-windows-*.exe` are also in each release.
+Those links always point at the newest release. Every file is also published
+under its versioned name (`lofi-1.0.1-linux-amd64.deb`, …) if you want to pin one.
 
 ```bash
 # Debian / Ubuntu
-sudo dpkg -i lofi-1.0.0-linux-amd64.deb && sudo apt-get install -f -y
-LOFI_TOKEN=... lofi --check   # binary at /usr/local/bin/lofi, then lofi
+sudo apt install ffmpeg libopus0             # runtime deps, not bundled
+sudo dpkg -i lofi-linux-amd64.deb && sudo apt-get install -f -y
+lofi --check                                 # verify the machine
+LOFI_TOKEN=... lofi                          # run it
+
 # macOS
-open lofi-1.0.0-macos-arm64.dmg  # drag lofi to /usr/local/bin
+brew install ffmpeg opus
+open lofi-macos-arm64.dmg                    # then run Lofi.pkg inside
 LOFI_TOKEN=... lofi --check
-# Windows
-lofi-1.0.0-windows-amd64-setup.exe   # installer → C:\Program Files\Lofi\lofi.exe
-lofi --check          # or portable: lofi-windows-amd64.exe --check
-# Raw binaries also available in release and in dist/ when building locally
+
+# Windows (PowerShell)
+winget install Gyan.FFmpeg
+.\lofi-windows-amd64-setup.exe
+lofi --check
 ```
 
-System deps still required (`ffmpeg` + `libopus` — `apt`/`brew`/`winget` line
-below, or `pip install imageio-ffmpeg`). Details, local builds and CI matrix:
-[`docs/PACKAGING.md`](docs/PACKAGING.md) · [`scripts/build.py`](scripts/build.py) · `make artifacts`.
+Rather install nothing? Each release also ships the **raw portable binary**
+(`lofi-linux-amd64`, `lofi-macos-arm64`, `lofi-windows-amd64.exe`) — same flags,
+no installer, no registry entry, no systemd unit.
 
-Sources still run with Python — see Quick start below.
+Verify a download before running it:
+
+```bash
+sha256sum -c SHA256SUMS.txt --ignore-missing
 ```
 
-System deps still required (`ffmpeg` + `libopus` — `apt`/`brew`/`winget` line
-below, or `pip install imageio-ffmpeg`). Details, local builds and CI matrix:
-[`docs/PACKAGING.md`](docs/PACKAGING.md) · [`scripts/build.py`](scripts/build.py) · `make artifacts`.
+No installer contains a bot token — pass `LOFI_TOKEN` at runtime. The 6-runner
+CI matrix, the packaging templates and local builds:
+[`docs/PACKAGING.md`](docs/PACKAGING.md) · [`scripts/build.py`](scripts/build.py) ·
+[`scripts/verify_packages.py`](scripts/verify_packages.py).
 
-Sources still run with Python — see Quick start below.
+Running from source instead? See Quick start below.
 
 ## Quick start
 

@@ -1,0 +1,52 @@
+#!/bin/sh
+# postinst for lofi — runs after the files are unpacked.
+set -e
+
+BIN=/usr/local/bin/lofi
+ENVFILE=/etc/lofi/lofi.env
+EXAMPLE=/usr/share/lofi/lofi.env
+
+# 1. The binary must be executable. dpkg preserves the mode we set at build
+#    time, but archives that went through a non-root build sometimes lose it.
+chmod 0755 "$BIN" 2>/dev/null || true
+
+# 2. Create the environment file from the packaged example, only if missing.
+#    The example lives in /usr/share/lofi rather than /usr/share/doc because
+#    slim Debian/Ubuntu images configure dpkg to skip /usr/share/doc/*.
+#    It is the documented place to put the bot token for the systemd unit.
+#    Never overwrite: a user's token must survive upgrades.
+#    (/etc/lofi is created here rather than shipped in the .deb because dpkg
+#    does not package empty directories.)
+if [ ! -d /etc/lofi ]; then
+    mkdir -p /etc/lofi
+    chmod 0755 /etc/lofi
+fi
+if [ ! -f "$ENVFILE" ] && [ -f "$EXAMPLE" ]; then
+    cp "$EXAMPLE" "$ENVFILE"
+    chmod 0600 "$ENVFILE"
+fi
+
+# 3. Tell systemd about the new unit. We never enable or start it here: the bot
+#    needs a token before it can do anything useful, so starting it from the
+#    package would only produce a crash loop in everyone's journal.
+if [ -d /run/systemd/system ] || [ -d /lib/systemd/system ]; then
+    systemctl daemon-reload >/dev/null 2>&1 || true
+fi
+
+echo ""
+echo "  Lofi installed."
+echo ""
+echo "  1. Put your bot token in the environment file (or export it):"
+echo "       sudo editor /etc/lofi/lofi.env"
+echo "  2. Check the machine can actually play audio:"
+echo "       lofi --check"
+echo "  3. Run it in the foreground, or as a service:"
+echo "       sudo systemctl enable --now lofi"
+echo ""
+echo "  The dashboard is bound to 127.0.0.1:8790 by default; see docs/SETUP.md"
+echo "  before exposing it to anything else."
+echo ""
+
+#DEBHELPER#
+
+exit 0

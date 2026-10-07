@@ -1,0 +1,17 @@
+#!/bin/sh
+# postrm for lofi — runs after the files are removed.
+set -e
+
+if [ "$1" = "purge" ]; then
+    # Only on purge: an upgrade ("remove"/"upgrade") must keep the token and
+    # the database, so someone upgrading does not lose their bot.
+    rm -f /etc/lofi/lofi.env
+    rmdir /etc/lofi 2>/dev/null || true
+    echo "Lofi configuration purged. Your data directory (LOFI_HOME) was left alone."
+fi
+
+if command -v systemctl >/dev/null 2>&1; then
+    systemctl daemon-reload >/dev/null 2>&1 || true
+fi
+
+exit 0
