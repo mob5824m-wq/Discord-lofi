@@ -8,6 +8,7 @@ wrong, [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
 - [Debian / Ubuntu](#debian--ubuntu)
 - [macOS](#macos)
 - [Windows](#windows)
+- [arm64 — Raspberry Pi, Apple Silicon, Graviton](#arm64--raspberry-pi-apple-silicon-graviton)
 - [Getting the code](#getting-the-code)
 - [Verifying the install](#verifying-the-install)
 - [Where files live](#where-files-live)
@@ -83,6 +84,28 @@ looks in its own directory before searching the system.
 WSL2 is the better option if you plan to keep this running: treat it as the Linux case above, and
 remember that audio is produced *inside* the VM and streamed to Discord over the network — your
 Windows sound card is not involved at all.
+
+### arm64 — Raspberry Pi, Apple Silicon, Graviton
+
+Supported with nothing to change and no compiler needed:
+
+- **No compiled code here.** The renderer is numpy; everything else is Python.
+- **Every native dependency publishes aarch64 wheels** — `PyNaCl`, `numpy`, `aiohttp`, `davey`
+  (pulled in by `discord.py[voice]`) and `audioop-lts` on Python 3.13 all ship
+  `manylinux*_aarch64` builds. `discord.py` and `yt-dlp` are pure Python.
+- **ffmpeg and libopus come from the distro.** Raspberry Pi OS is Debian: `sudo apt install ffmpeg
+  libopus0`, the same command as on x86. The pip fallback works too — `imageio-ffmpeg` publishes a
+  `manylinux2014_aarch64` wheel with a bundled binary that `--check` finds on its own.
+- **Docker**: `python:3.12-slim` is multi-arch, so the Dockerfile below builds unchanged on arm64 —
+  natively on the Pi, or with `docker buildx build --platform linux/arm64`.
+- **Apple Silicon**: `brew install python ffmpeg opus`; discord.py finds opus at
+  `/opt/homebrew/lib/libopus.0.dylib`.
+
+What arm64 does change is headroom. Each connected voice channel costs one ffmpeg process and one
+Opus encoder thread, and Studio Lofi's render is CPU-bound — about 3 s per track on the x86 machine
+this was built on, longer on a Pi 3. The render is cached by content hash, so that cost is paid once
+per mood per machine; on a small board, prefer the library and stream stations, or play a mood once
+and let the cache do the rest.
 
 ---
 

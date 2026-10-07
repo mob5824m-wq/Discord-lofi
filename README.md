@@ -44,7 +44,9 @@ brew install python ffmpeg opus
 ```
 
 If your platform has no ffmpeg package, `pip install imageio-ffmpeg` ships a binary the bot will
-find on its own.
+find on its own. **arm64 works with no changes** — Raspberry Pi OS, Apple Silicon, Graviton: every
+native dependency publishes aarch64 wheels and there is no compiled code here
+([details](docs/INSTALL.md#arm64--raspberry-pi-apple-silicon-graviton)).
 
 **2. Install and create a bot token**
 
