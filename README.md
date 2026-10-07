@@ -31,10 +31,9 @@ is throttled, or on a box with no internet at all.
 
 ---
 
-## Download — install without Python
+## Download 
 
-Every release is built by GitHub Actions on 6 native runners and published as
-OS-native installers. Pick your machine:
+Pick your machine:
 
 | OS | Download | What the installer does |
 |---|---|---|
@@ -45,12 +44,10 @@ OS-native installers. Pick your machine:
 | **Debian / Ubuntu** amd64 | [`lofi-linux-amd64.deb`](https://github.com/mob5824m-wq/Discord-lofi/releases/latest/download/lofi-linux-amd64.deb) | `dpkg` → `/usr/local/bin/lofi`, systemd unit (installed, not enabled), man page, `/etc/lofi/lofi.env` |
 | **Debian / Ubuntu** arm64 | [`lofi-linux-arm64.deb`](https://github.com/mob5824m-wq/Discord-lofi/releases/latest/download/lofi-linux-arm64.deb) | same, for Raspberry Pi / Graviton |
 
-Those links always point at the newest release. Every file is also published
-under its versioned name (`lofi-1.0.1-linux-amd64.deb`, …) if you want to pin one.
 
 ```bash
 # Debian / Ubuntu
-sudo apt install ffmpeg libopus0             # runtime deps, not bundled
+sudo apt install ffmpeg libopus0  && sudo apt install yt-dlp  # runtime deps, not bundled
 sudo dpkg -i lofi-linux-amd64.deb && sudo apt-get install -f -y
 lofi --check                                 # verify the machine
 LOFI_TOKEN=... lofi                          # run it
