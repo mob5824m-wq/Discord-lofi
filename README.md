@@ -428,7 +428,7 @@ Discord (`/lofi setup …`) or the dashboard lands in that server's entry. Unkno
 config written by a newer version survives a downgrade.
 
 Environment variables: `LOFI_TOKEN`, `LOFI_HOME`, `LOFI_CONFIG`, `LOFI_DB`, `LOFI_MUSIC`,
-`LOFI_FFMPEG`, `LOFI_FFPROBE`, `LOFI_LOG_LEVEL`, `LOFI_DASHBOARD_TOKEN`, `LOFI_DASHBOARD_HOST`,
+`LOFI_FFMPEG`, `LOFI_FFPROBE`, `LOFI_OPUS`, `LOFI_LOG_LEVEL`, `LOFI_DASHBOARD_TOKEN`, `LOFI_DASHBOARD_HOST`,
 `LOFI_DASHBOARD_PORT`, `LOFI_DASHBOARD_PUBLIC_URL`, `LOFI_DASHBOARD_TLS_CERT`,
 `LOFI_DASHBOARD_TLS_KEY`.
 
@@ -581,11 +581,11 @@ pip install -r requirements.txt -r requirements-dev.txt   # or: pip install pyte
 python3 -m pytest
 ```
 
-**831 tests, no network, no Discord token, ~50 s.**
+**839 tests, no network, no Discord token, ~50 s.**
 
 | file | tests | what it covers |
 | --- | --- | --- |
-| `test_paths.py` | 34 | XDG/Windows/macOS data dirs, config precedence, ffmpeg + opus discovery |
+| `test_paths.py` | 42 | XDG/Windows/macOS data dirs, config precedence, ffmpeg + opus discovery |
 | `test_settings.py` | 59 | every config key: coercion, defaults, clamping, precedence |
 | `test_stations.py` | 101 | validation, dedupe, merge order, live-detection heuristics, presets |
 | `test_store.py` | 49 | schema, migrations, sessions, events, history aggregates, corruption recovery |

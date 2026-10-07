@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import stat
 import sys
 from pathlib import Path
+from typing import Optional
 
 import pytest
 
@@ -127,6 +129,140 @@ def test_a_real_config_wins_over_the_template(tmp_state, monkeypatch):
     (tmp_state / "config.json").write_text(json.dumps({"default_volume": 11}), encoding="utf-8")
     assert paths.config_path().name == "config.json"
     assert paths.load_config()["default_volume"] == 11
+
+
+# --------------------------------------------------------------------------- #
+# libopus discovery
+#
+# Shared libraries do not live on PATH: a correctly installed libopus on Debian
+# is /usr/lib/x86_64-linux-gnu/libopus.so.0. Searching with shutil.which() -
+# which is what this used to do - reports "not found" on every working Linux
+# install, and CI caught it on the first run against a real runner.
+# --------------------------------------------------------------------------- #
+LINUX = sys.platform.startswith("linux")
+
+
+def _a_real_library() -> Optional[Path]:
+    """Something on this machine that can actually be dlopened.
+
+    Stands in for libopus, which the test environment does not have. libc is
+    already loaded in this process, so opening it again is a refcount bump
+    rather than a real load.
+    """
+    for directory in (
+        "/usr/lib/x86_64-linux-gnu",
+        "/lib/x86_64-linux-gnu",
+        "/usr/lib/aarch64-linux-gnu",
+        "/lib/aarch64-linux-gnu",
+        "/usr/lib64",
+        "/lib64",
+        "/usr/lib",
+        "/lib",
+    ):
+        for name in ("libc.so.6", "libc.so"):
+            candidate = Path(directory) / name
+            if candidate.is_file():
+                return candidate
+    return None
+
+
+@pytest.fixture
+def opus_not_loaded(monkeypatch):
+    """The normal state at --check time: nothing has loaded opus yet."""
+    import discord.opus
+
+    monkeypatch.setattr(discord.opus, "is_loaded", lambda: False)
+    monkeypatch.delenv("LOFI_OPUS", raising=False)
+    monkeypatch.delenv("LD_LIBRARY_PATH", raising=False)
+    return discord.opus
+
+
+@pytest.fixture
+def fake_libopus(tmp_path, monkeypatch, opus_not_loaded) -> Path:
+    """A loadable file named the way libopus is named, in a directory that is
+    not on PATH - the exact shape of a real libopus0 install."""
+    if not LINUX:
+        pytest.skip("the multiarch library layout is a Linux thing")
+    real = _a_real_library()
+    if real is None:
+        pytest.skip("no loadable system library to stand in for libopus")
+    directory = tmp_path / "x86_64-linux-gnu"
+    directory.mkdir()
+    target = directory / "libopus.so.0"
+    try:
+        target.symlink_to(real)
+    except (OSError, NotImplementedError):  # pragma: no cover - odd filesystems
+        target.write_bytes(real.read_bytes())
+    monkeypatch.setenv("LD_LIBRARY_PATH", str(directory))
+    return target
+
+
+def test_opus_is_found_in_a_library_directory_that_is_not_on_path(fake_libopus):
+    """The regression: `which libopus.so.0` finds nothing on a working install."""
+    assert shutil.which("libopus.so.0") is None  # the search that used to be the only one
+    assert paths.opus_library() == str(fake_libopus)
+
+
+def test_the_scan_covers_the_multiarch_directories(monkeypatch, opus_not_loaded):
+    """Debian, Ubuntu and Fedora all put it somewhere else again."""
+    if LINUX:
+        found = {str(directory) for directory in paths._library_dirs()}
+        assert "/usr/lib" in found and "/lib" in found
+        multiarch = [item for item in found if "linux-gnu" in item]
+        if Path("/usr/lib/x86_64-linux-gnu").is_dir() or Path("/usr/lib/aarch64-linux-gnu").is_dir():
+            assert multiarch, "the multiarch triple directories were not scanned"
+
+
+def test_ld_library_path_is_searched_first(monkeypatch, opus_not_loaded):
+    """So a custom build can shadow a system one."""
+    directories = paths._library_dirs()
+    assert directories, "no directories to search at all"
+    monkeypatch.setenv("LD_LIBRARY_PATH", "/opt/custom/lib")
+    assert str(paths._library_dirs()[0]) == "/opt/custom/lib"
+
+
+def test_a_file_with_the_right_name_that_cannot_be_loaded_is_rejected(
+    tmp_path, monkeypatch, opus_not_loaded
+):
+    """A wrong-architecture library or a dangling symlink must not be reported
+    as a working install: --check should never say "fine" and then have
+    discord.py fail at connect time."""
+    if not LINUX:
+        pytest.skip("the multiarch library layout is a Linux thing")
+    directory = tmp_path / "x86_64-linux-gnu"
+    directory.mkdir()
+    (directory / "libopus.so.0").write_text("this is not an ELF object")
+    monkeypatch.setenv("LD_LIBRARY_PATH", str(directory))
+    assert paths.opus_library() is None
+
+
+def test_lofi_opus_points_straight_at_the_library(fake_libopus, monkeypatch):
+    """The escape hatch for an unusual prefix, mirroring LOFI_FFMPEG."""
+    monkeypatch.setenv("LOFI_OPUS", str(fake_libopus))
+    assert paths.opus_library() == str(fake_libopus)
+
+
+def test_a_lofi_opus_that_cannot_be_opened_is_not_pretended_to_work(
+    tmp_path, monkeypatch, opus_not_loaded
+):
+    broken = tmp_path / "libopus.so.0"
+    broken.write_text("nope")
+    monkeypatch.setenv("LOFI_OPUS", str(broken))
+    assert paths.opus_library() is None
+
+
+def test_nothing_is_reported_when_there_is_nothing_to_find(monkeypatch, opus_not_loaded):
+    monkeypatch.setattr(paths, "_library_dirs", lambda: [])
+    monkeypatch.setattr(paths.shutil, "which", lambda name: None)
+    monkeypatch.setenv("LD_LIBRARY_PATH", "")
+    assert paths.opus_library() is None
+
+
+def test_an_already_loaded_library_short_circuits_the_search(monkeypatch, fake_libopus):
+    import discord.opus
+
+    monkeypatch.setattr(discord.opus, "is_loaded", lambda: True)
+    assert paths.opus_library() == "loaded"
 
 
 def test_music_dir_is_none_when_there_is_no_folder(tmp_state, monkeypatch):

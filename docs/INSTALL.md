@@ -49,6 +49,13 @@ ffmpeg -version | head -1        # sanity check
 `libopus0` is the runtime library. On a machine that will also *build* things against opus you
 would want `libopus-dev`, but the bot only dlopens the shared object, so `libopus0` is enough.
 
+It is found by scanning the directories shared libraries actually live in — `/usr/lib/<triplet>`
+(`x86_64-linux-gnu`, `aarch64-linux-gnu`, `arm-linux-gnueabihf`, …), `/usr/lib64`, `/usr/lib`,
+`/lib64`, `/lib` — plus `LD_LIBRARY_PATH`, and every candidate is opened with `dlopen` before it is
+reported, so `--check` cannot tell you a wrong-architecture file is fine. They are *not* on `PATH`,
+which is why searching `PATH` alone reports "not found" on a perfectly good install. For anything
+else, `LOFI_OPUS=/path/to/libopus.so.0` overrides the search.
+
 Raspberry Pi OS / other Debian derivatives: identical. On arm64 the same package names apply.
 
 ## macOS
@@ -57,13 +64,13 @@ Raspberry Pi OS / other Debian derivatives: identical. On arm64 the same package
 brew install python ffmpeg opus
 ```
 
-discord.py finds Homebrew's opus at `/opt/homebrew/lib/libopus.0.dylib` (Apple Silicon) or
-`/usr/local/lib/libopus.0.dylib` (Intel). If it does not — an unusual prefix, a MacPorts install —
-point at it explicitly:
+Lofi looks for opus in the Homebrew prefixes (`/opt/homebrew/lib` on Apple Silicon,
+`/usr/local/lib` on Intel), MacPorts' `/opt/local/lib`, and anything on `DYLD_LIBRARY_PATH`. For an
+unusual prefix, point straight at the file:
 
 ```bash
-export LOFI_HOME="$HOME/Library/Application Support/Lofi"
-python3 bot.py --check     # reports which opus it found
+export LOFI_OPUS=/opt/homebrew/lib/libopus.0.dylib
+python3 bot.py --check     # reports which opus it found, or why LOFI_OPUS was rejected
 ```
 
 ## Windows

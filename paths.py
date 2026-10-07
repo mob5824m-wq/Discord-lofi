@@ -15,15 +15,20 @@ code never guesses a location. Three kinds of path live here:
   sync that folder from elsewhere, and a reinstall must not delete their
   tracks.
 
-``ffmpeg_executable()`` is here too, because "which ffmpeg do we shell out to"
-is the same question as "which file do we read": discord.py's voice support
-needs an ffmpeg binary, and on a desktop machine it is usually installed
-somewhere that is not on ``PATH`` (a Homebrew prefix, ``C:\\ffmpeg\\bin``, a
-Python package that bundles one).
+``ffmpeg_executable()`` and ``opus_library()`` are here too, because "which
+ffmpeg do we shell out to" is the same question as "which file do we read":
+discord.py's voice support needs an ffmpeg binary and a libopus shared library,
+and on a desktop machine they are usually installed somewhere that is not on
+``PATH`` (a Homebrew prefix, ``C:\\ffmpeg\\bin``, a Python package that bundles
+one). libopus is *never* on ``PATH`` - it is a shared library, found in the
+multiarch directories a linker would search, or named outright by
+``LOFI_OPUS``.
 """
 
 from __future__ import annotations
 
+import contextlib
+import ctypes
 import json
 import logging
 import os
@@ -472,6 +477,64 @@ def ffmpeg_executable(name: str = "ffmpeg") -> Optional[str]:
     return resolved
 
 
+def _library_dirs() -> list[Path]:
+    """Directories where a shared library actually lives.
+
+    ``shutil.which`` searches ``PATH``, and shared libraries are not on ``PATH``:
+    a correctly installed libopus on Debian sits at
+    ``/usr/lib/x86_64-linux-gnu/libopus.so.0`` and on Fedora at
+    ``/usr/lib64/libopus.so.0``. Searching only ``PATH`` reports "not found" on
+    every working Linux install, which is worse than not looking at all - it
+    sends people to install a package they already have, and it made the bot
+    log "voice support is not ready" while audio would in fact have worked
+    (discord.py finds opus on its own, via :func:`ctypes.util.find_library`).
+    """
+    dirs: list[Path] = []
+    for variable in ("LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH"):
+        raw = os.environ.get(variable, "")
+        dirs.extend(Path(entry) for entry in raw.split(os.pathsep) if entry.strip())
+
+    if os.name == "nt":
+        # A DLL dropped next to bot.py is the documented Windows fix; the
+        # interpreter directory catches a manually installed libopus-0.dll too.
+        dirs.append(source_dir())
+        dirs.append(Path(sys.prefix))
+        return dirs
+
+    if sys.platform == "darwin":
+        dirs.extend(Path(item) for item in ("/opt/homebrew/lib", "/usr/local/lib", "/opt/local/lib"))
+    else:
+        # Debian/Ubuntu/Fedora multiarch triples: /usr/lib/x86_64-linux-gnu,
+        # /usr/lib/aarch64-linux-gnu, /lib/arm-linux-gnueabihf, ...
+        for root in (Path("/usr/lib"), Path("/lib")):
+            with contextlib.suppress(OSError):
+                dirs.extend(
+                    sorted(entry for entry in root.iterdir() if entry.is_dir() and "linux-gnu" in entry.name)
+                )
+
+    dirs.extend(Path(item) for item in ("/usr/lib64", "/usr/lib", "/lib64", "/lib"))
+    return dirs
+
+
+def _loadable_library(candidate: Path) -> bool:
+    """True when the file exists and can actually be opened as a library.
+
+    A file with the right name is not the same as a usable library: it may be
+    for the wrong architecture, or a dangling symlink in a multiarch directory.
+    ``--check`` should never say the install is fine and then have discord.py
+    fail at connect time, so the answer here is the same test discord.py makes.
+    """
+    try:
+        if not candidate.is_file():
+            return False
+        ctypes.CDLL(str(candidate))
+    except OSError:
+        return False
+    except Exception:  # pragma: no cover - unusual platforms
+        return True
+    return True
+
+
 def opus_library() -> Optional[str]:
     """A libopus discord.py can load, if one is findable.
 
@@ -479,6 +542,10 @@ def opus_library() -> Optional[str]:
     "the bot cannot join". Reporting it up front - and naming the package to
     install - is the difference between a five-minute setup and a support
     request.
+
+    ``LOFI_OPUS`` points straight at a library file for the cases the search
+    cannot cover (an unusual prefix, a MacPorts install, a container that keeps
+    it somewhere odd).
     """
     try:
         import discord.opus  # noqa: WPS433 - import is the probe
@@ -487,17 +554,40 @@ def opus_library() -> Optional[str]:
             return "loaded"
     except Exception:
         return None
-    search = {
-        "darwin": ["libopus.0.dylib", "libopus.dylib", "/opt/homebrew/lib/libopus.0.dylib"],
-        "win32": ["libopus-0.dll", "opus.dll"],
+
+    override = _env_path("LOFI_OPUS")
+    if override is not None:
+        return str(override) if _loadable_library(override) else None
+
+    names = {
+        "darwin": ["libopus.0.dylib", "libopus.dylib"],
+        "win32": ["libopus-0.dll", "libopus.dll", "opus.dll"],
     }.get(sys.platform, ["libopus.so.0", "libopus.so"])
-    for candidate in search:
-        path = Path(candidate)
-        if path.is_absolute() and path.is_file():
-            return str(path)
-        found = shutil.which(candidate)
-        if found:
+
+    directories = _library_dirs()
+    for name in names:
+        candidate = Path(name)
+        if candidate.is_absolute():
+            if _loadable_library(candidate):
+                return str(candidate)
+            continue
+        found = shutil.which(name)  # Windows, or a library genuinely on PATH
+        if found and _loadable_library(Path(found)):
             return found
+        for directory in directories:
+            probe = directory / name
+            if _loadable_library(probe):
+                return str(probe)
+
+    # Last resort, and the one discord.py itself uses. Slim containers often
+    # have no ldconfig cache and no compiler, so find_library can come up empty
+    # even when the file is there - which is why the scan above runs first.
+    with contextlib.suppress(Exception):
+        from ctypes.util import find_library
+
+        resolved = find_library("opus")
+        if resolved and _loadable_library(Path(resolved)):
+            return resolved
     return None
 
 

@@ -381,11 +381,22 @@ def _check_rows() -> list[tuple[str, str, str, list[str]]]:
     with contextlib.suppress(Exception):
         opus_loaded = discord.opus.is_loaded()
     opus_hint = paths.opus_library()
+    opus_override = os.environ.get("LOFI_OPUS", "").strip()
+    if opus_loaded:
+        opus_detail = "loaded"
+    elif opus_hint:
+        opus_detail = opus_hint
+    elif opus_override:
+        # Naming the bad override beats "not found": the library may well be
+        # installed, and LOFI_OPUS is pointing somewhere else.
+        opus_detail = f"LOFI_OPUS points at {opus_override}, which could not be opened"
+    else:
+        opus_detail = "not found"
     rows.append(
         (
             "libopus",
             "ok" if (opus_loaded or opus_hint) else "missing",
-            "loaded" if opus_loaded else (opus_hint or "not found"),
+            opus_detail,
             []
             if (opus_loaded or opus_hint)
             else [

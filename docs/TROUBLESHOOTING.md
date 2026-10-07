@@ -58,7 +58,14 @@ that, logs it, and reports it through `/lofi status` and the dashboard rather th
 sudo apt install ffmpeg libopus0     # Linux
 brew install ffmpeg opus             # macOS
 pip install imageio-ffmpeg           # anywhere: a bundled ffmpeg binary Lofi will find
+export LOFI_OPUS=/path/to/libopus.so.0   # an unusual prefix, or a container that keeps it oddly
 ```
+
+Opus is searched for in the directories shared libraries live in — `/usr/lib/<triplet>` for the
+multiarch layouts Debian, Ubuntu and Fedora use, then `/usr/lib64`, `/usr/lib`, `/lib64`, `/lib`, plus
+`LD_LIBRARY_PATH` and the Homebrew/MacPorts prefixes on macOS — never `PATH`, where they are not. Each
+candidate is `dlopen`ed before it is accepted, so a file with the right name and the wrong
+architecture is reported as missing rather than as working.
 
 The startup warning names it:
 
