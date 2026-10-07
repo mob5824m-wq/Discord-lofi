@@ -1,0 +1,31 @@
+# Windows-on-ARM dependency set — used by .github/workflows/release.yml for the
+# windows-11-arm build. On a Windows ARM64 machine, `pip install -r
+# requirements-winarm.txt` with Python 3.12+ does the same locally.
+#
+# Why this file exists: `discord.py[voice]` (see requirements.txt) cannot
+# install on win_arm64 at all.
+#
+#   * The voice extra pins `PyNaCl<1.6`, and PyNaCl publishes no win_arm64
+#     wheels before 1.6.0. 1.5.x is sdist-only, and its source build dies on
+#     the runner with [WinError 193] %1 is not a valid Win32 application
+#     (no ARM64 C toolchain on the image).
+#   * The extra also pulls `davey`, which ships no win_arm64 wheels at any
+#     version.
+#
+# So the same voice stack is spelled out here with the pins that actually
+# resolve on this platform: discord.py without the extra, plus PyNaCl 1.6+
+# (which provides the same `nacl` module, so voice encryption works).
+# `davey` is omitted — discord.py treats both packages as optional at import
+# time (`has_nacl` / `has_dave`) and falls back from the DAVE E2EE protocol to
+# the classic voice protocol.
+#
+# Python 3.12+ is required on this platform: numpy publishes no win_arm64
+# wheels for 3.11 at any version, and a numpy source build fails the same way.
+# Everything below installs from wheels — verified with
+#   pip download --platform win_arm64 --python-version 3.12 \
+#     --implementation cp --abi cp312 --only-binary=:all: ...
+discord.py>=2.4.0
+PyNaCl>=1.6
+aiohttp>=3.9
+yt-dlp>=2024.10.7
+numpy>=1.24
