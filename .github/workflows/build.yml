@@ -75,6 +75,13 @@ jobs:
           LOFI_TOKEN: ci-dummy-token-not-used-for-anything
         run: python -m pytest -ra
 
+      - name: Packaging smoke (spec + 6-way matrix names)
+        run: |
+          test -f lofi.spec || (echo "lofi.spec missing" && exit 1)
+          python scripts/build.py --all
+          python scripts/build.py --name-only
+          echo "Matrix OK — see docs/PACKAGING.md for the 6 artifacts"
+
   # --------------------------------------------------------------------- #
   # The dashboard UI, driven in jsdom against a real server in --demo mode.
   #
