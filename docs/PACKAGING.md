@@ -256,6 +256,22 @@ git tag v1.2.0 && git push origin v1.2.0          # cut a specific version
 gh workflow run release --ref main -f version=1.3.0 -f bump=minor
 ```
 
+### Package mirrors
+
+Everything that installs OS packages — `ffmpeg`, `libopus0`, `dpkg-dev` — goes
+through `scripts/ci_apt_install.sh`, because the runner's package mirror is the
+least reliable thing this pipeline touches. In one afternoon it held a step for
+over half an hour with no output, stalled past a 240 s bound, and was
+unreachable for three bounded attempts in a row — each time failing a job that
+had nothing to do with packages, and once taking the whole run's checks with it.
+
+The script tries the cheapest thing first (a plain install: the images ship with
+usable package lists), then update-then-install, then the same again after
+pointing apt at `archive.ubuntu.com` instead of the azure mirror, and gives up
+after three bounded attempts with the apt output attached as annotations. A job
+that needs a system package must call it rather than run `apt-get` itself;
+`tests/test_release_workflow.py` fails if one does.
+
 ### When a release does not appear
 
 `prepare` pushes the bump commit and its tag in one step, so a failure that

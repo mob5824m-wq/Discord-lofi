@@ -56,39 +56,14 @@ jobs:
       # Voice needs an ffmpeg binary and libopus as a shared library; neither is
       # a Python package, and both are what `--check` exists to verify.
       #
-      # Bounded twice over, because an unbounded `apt-get update` is what turned
-      # a stalled mirror into a job that produced nothing for half an hour with
-      # no explanation anywhere: each attempt is killed after 240s and the loop
-      # gives up after three. A mirror that is only briefly unreachable no
-      # longer fails the build, and one that is genuinely gone costs minutes
-      # instead of the job. ForceIPv4 plus the Acquire timeouts stop an
-      # individual connection (the classic culprit is a blackholed IPv6 route to
-      # archive.ubuntu.com while IPv4 works) from hanging in the first place.
-      #
-      # Verified against the runner that actually stalled: on this branch's
-      # first run after these flags went in, the Python 3.9 job's mirror stalled
-      # again and the step failed on its 10-minute timeout instead of hanging -
-      # bounded, but still red. Hence the retries.
+      # apt itself goes through scripts/ci_apt_install.sh, which is the one
+      # place that knows how flaky the runner's mirror is: bounded attempts,
+      # bounded connections, the cheap path first, a different mirror before
+      # giving up, and the apt output attached as annotations when it does.
       - name: Install system audio dependencies
         timeout-minutes: 15
-        env:
-          DEBIAN_FRONTEND: noninteractive
         run: |
-          updated=0
-          for attempt in 1 2 3; do
-            if sudo timeout 240 apt-get -o Acquire::ForceIPv4=true -o Acquire::Retries=2 \
-                 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 update; then
-              updated=1
-              break
-            fi
-            echo "::warning::apt-get update attempt $attempt/3 did not finish in 240s"
-            sleep 10
-          done
-          if [ "$updated" != "1" ]; then
-            echo "::error::apt-get update did not complete in 3 attempts - the mirror is unreachable from this runner"
-            exit 1
-          fi
-          sudo apt-get install -y --no-install-recommends ffmpeg libopus0
+          sudo bash scripts/ci_apt_install.sh ffmpeg libopus0
           ffmpeg -version | head -1
 
       - name: Install Python dependencies
@@ -164,25 +139,9 @@ jobs:
 
       - name: Install system audio dependencies
         timeout-minutes: 15
-        env:
-          DEBIAN_FRONTEND: noninteractive
         run: |
-          # Same hardening as the tests job: see the note there.
-          updated=0
-          for attempt in 1 2 3; do
-            if sudo timeout 240 apt-get -o Acquire::ForceIPv4=true -o Acquire::Retries=2 \
-                 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 update; then
-              updated=1
-              break
-            fi
-            echo "::warning::apt-get update attempt $attempt/3 did not finish in 240s"
-            sleep 10
-          done
-          if [ "$updated" != "1" ]; then
-            echo "::error::apt-get update did not complete in 3 attempts - the mirror is unreachable from this runner"
-            exit 1
-          fi
-          sudo apt-get install -y --no-install-recommends ffmpeg libopus0
+          # Same installer as the tests job: see the note there.
+          sudo bash scripts/ci_apt_install.sh ffmpeg libopus0
 
       - name: Install Python dependencies
         run: |

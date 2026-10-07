@@ -86,6 +86,37 @@ def _join_continuations(text: str) -> str:
     """
     return re.sub(r"\\\n\s*", " ", text)
 
+
+def _shell_of(job_block: str) -> str:
+    """The text of every ``run:`` in a job — the commands, not the prose.
+
+    A job block also carries prose that *mentions* commands: the release body
+    tells users to run ``apt-get install -f`` after installing the .deb, and a
+    check for "this job calls apt" must not read that as a call.
+    """
+    lines = job_block.splitlines()
+    out: list[str] = []
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        match = re.match(r"^(\s*)(?:-\s+)?run:\s*(.*)$", line)
+        if not match:
+            index += 1
+            continue
+        indent, rest = match.group(1), match.group(2)
+        if rest and rest not in ("|", "|-", ">", ">-"):
+            out.append(rest)
+            index += 1
+            continue
+        index += 1
+        while index < len(lines):
+            following = lines[index]
+            if following.strip() and not following.startswith(indent + "  "):
+                break
+            out.append(following)
+            index += 1
+    return "\n".join(out)
+
 #: The 6 installers a release must carry, spelled as the release job spells them.
 SIX_INSTALLERS = [
     "lofi-${VER}-linux-amd64.deb",
@@ -184,26 +215,69 @@ def test_every_job_has_a_timeout():
             )
 
 
-@pytest.mark.parametrize("workflow", sorted(WORKFLOWS))
-def test_apt_updates_bound_their_connections(workflow):
-    """`apt-get update` with no bounds is a step that can hang on its own.
+#: Where the OS packages each job needs get installed, and with what.
+PACKAGE_INSTALL_CALLS = {
+    "build.yml": {
+        "tests": ["ffmpeg", "libopus0"],
+        "ui": ["ffmpeg", "libopus0"],
+    },
+    "release.yml": {
+        "build": ["ffmpeg", "libopus0", "dpkg-dev"],
+    },
+}
 
-    A blackholed route to the mirror — the usual one is IPv6 to
-    archive.ubuntu.com — waits out its own timeout per attempt, and with none
-    configured the step simply never returns. ForceIPv4 and the Acquire
-    timeouts bound every connection; `timeout N apt-get` bounds the attempt as
-    a whole, so a mirror that accepts connections but never delivers cannot
-    hold the step either.
+
+def test_no_workflow_calls_apt_directly():
+    """apt is flaky in three separate ways; it is handled in exactly one place.
+
+    Not a style rule. A bare `apt-get update` in a job is what produced a step
+    that ran for half an hour with no output, then two more failures on two
+    other runners, and each fix had to be repeated in three places to hold.
+    The installer script is that place; a job that goes around it loses the
+    bounds, the retries and the mirror fallback.
     """
-    for job, block in WORKFLOWS[workflow].items():
-        for command in re.findall(r"^.*apt-get.*update.*$", _join_continuations(block), re.MULTILINE):
-            if command.lstrip().startswith("echo "):
-                continue  # a message *about* apt-get, not a call to it
-            assert "Acquire::http::Timeout" in command, (
-                f"{workflow}:{job}: apt-get update without Acquire::http::Timeout "
-                f"- a stalled mirror would hang it: {command.strip()}"
+    for workflow, jobs in WORKFLOWS.items():
+        for job, block in jobs.items():
+            for command in re.findall(r"^.*apt-get.*$", _join_continuations(_shell_of(block)), re.MULTILINE):
+                if command.lstrip().startswith("echo "):
+                    continue  # a message *about* apt, not a call to it
+                pytest.fail(
+                    f"{workflow}:{job} calls apt-get directly; use "
+                    f"scripts/ci_apt_install.sh instead: {command.strip()}"
+                )
+
+
+def test_every_job_that_needs_system_packages_uses_the_installer():
+    for workflow, jobs in PACKAGE_INSTALL_CALLS.items():
+        for job, packages in jobs.items():
+            assert "scripts/ci_apt_install.sh" in WORKFLOWS[workflow][job], (
+                f"{workflow}:{job} installs system packages without the installer"
             )
-            assert re.search(r"\btimeout\s+\d+\s+apt-get", command), (
-                f"{workflow}:{job}: apt-get update is not wrapped in `timeout N` "
-                f"- one stalled attempt would run to the step timeout: {command.strip()}"
-            )
+            for package in packages:
+                assert package in WORKFLOWS[workflow][job], (
+                    f"{workflow}:{job} no longer installs {package}"
+                )
+
+
+def test_the_installer_bounds_every_attempt_and_every_connection():
+    """The installer's own contract: nothing unbounded, nothing hand-rolled."""
+    source = (WORKFLOWS_DIR.parent.parent / "scripts" / "ci_apt_install.sh").read_text(encoding="utf-8")
+
+    assert 'timeout "$ATTEMPT_TIMEOUT"' in source, "attempts are not bounded as a whole"
+    for option in (
+        "Acquire::ForceIPv4=true",
+        "Acquire::Retries=2",
+        "Acquire::http::Timeout=20",
+        "Acquire::https::Timeout=20",
+    ):
+        assert option in source, f"the installer no longer sets {option}"
+
+    # Every apt-get call is routed through the helper that applies the bound.
+    for line in source.splitlines():
+        stripped = line.strip()
+        if "apt-get" not in stripped or stripped.startswith("#") or stripped.startswith("echo"):
+            continue
+        assert stripped.startswith("run_bounded apt-get"), (
+            f"apt-get outside run_bounded - one stalled attempt would run "
+            f"unbounded: {stripped}"
+        )
