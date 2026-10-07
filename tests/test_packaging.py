@@ -11,6 +11,8 @@ the byte-level verifier that gates the release.
 
 from __future__ import annotations
 
+import json
+import os
 import shutil
 import subprocess
 import sys
@@ -257,6 +259,214 @@ def test_verifier_still_catches_a_portable_binary_of_the_wrong_arch(tmp_path):
 def test_verifier_reports_missing_expected_artifacts(tmp_path):
     results = verifier.verify_dir(tmp_path, expected=["lofi-1.2.3-linux-amd64.deb"])
     assert results and not results[0].ok and "MISSING" in results[0].detail
+
+
+# --------------------------------------------------------------------------- #
+# the installers ask for the token, once
+# --------------------------------------------------------------------------- #
+
+def _deb_script(tmp_path: Path) -> Path:
+    """The real postinst, with its absolute paths pointed at a throwaway prefix.
+
+    A maintainer script is written for the machine it installs on, so the only
+    way to run one here is to rewrite the paths at the top - which is also what
+    keeps the test honest: it executes the real file, not a paraphrase of it.
+    """
+    example = tmp_path / "share" / "lofi.env"
+    example.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(ROOT / "packaging" / "debian" / "lofi.env.example", example)
+    text = (ROOT / "packaging" / "debian" / "postinst").read_text()
+    for old, new in (
+        ("BIN=/usr/local/bin/lofi", f"BIN={tmp_path}/bin/lofi"),
+        ("ENVFILE=/etc/lofi/lofi.env", f"ENVFILE={tmp_path}/etc/lofi.env"),
+        ("EXAMPLE=/usr/share/lofi/lofi.env", f"EXAMPLE={example}"),
+        ("mkdir -p /etc/lofi", f"mkdir -p {tmp_path}/etc"),
+        ("chmod 0755 /etc/lofi", f"chmod 0755 {tmp_path}/etc"),
+        ("-d /etc/lofi", f"-d {tmp_path}/etc"),
+        ("systemctl daemon-reload >/dev/null 2>&1 || true", "true"),
+    ):
+        assert old in text, old
+        text = text.replace(old, new)
+    script = tmp_path / "postinst"
+    script.write_text(text)
+    script.chmod(0o755)
+    return script
+
+
+def _macos_script(tmp_path: Path) -> Path:
+    """The real postinstall, with the console user's home pointed at tmp_path."""
+    text = (ROOT / "packaging" / "macos" / "postinstall").read_text()
+    for old, new in (
+        ("CONSOLE_USER=\"$(/usr/bin/stat -f%Su /dev/console 2>/dev/null || true)\"",
+         'CONSOLE_USER="somebody"'),
+        ('CONF_DIR="/Users/$CONSOLE_USER/Library/Application Support/lofi"',
+         f'CONF_DIR="{tmp_path}/Library/Application Support/lofi"'),
+        ("/usr/bin/osascript", f"{tmp_path}/no-osascript-here"),
+        ('chmod 0755 "$BIN"', "true"),   # no payload to make executable here
+    ):
+        assert old in text, old
+        text = text.replace(old, new)
+    script = tmp_path / "postinstall"
+    script.write_text(text)
+    script.chmod(0o755)
+    return script
+
+
+def _installer_env() -> dict:
+    """The environment a maintainer script runs in, minus what the shell already set.
+
+    ``LOFI_TOKEN`` in the ambient environment means "the token is already
+    configured", which is exactly the case where the script must not ask - so a
+    test that wants the prompt has to take it away first.
+    """
+    return {k: v for k, v in os.environ.items() if k not in ("LOFI_TOKEN", "DEBIAN_FRONTEND")}
+
+
+def _run_with_a_terminal(script: Path, answer: str, timeout: float = 30.0):
+    """Run a script with stdin/stdout on a pty, the way a person would see it.
+
+    Returns ``(output, exit code)``. A maintainer script that blocks waiting for
+    an answer is exactly the bug this is here to catch, so the read side is
+    bounded and a hang is a failure rather than a slow test.
+    """
+    import select
+
+    master, slave = os.openpty()
+    proc = None
+    try:
+        proc = subprocess.Popen(
+            ["/bin/sh", str(script)], stdin=slave, stdout=slave, stderr=slave,
+            env=_installer_env(),
+        )
+        os.close(slave)
+        slave = None
+        os.write(master, answer.encode())
+        chunks = []
+        while True:
+            ready, _, _ = select.select([master], [], [], timeout)
+            if not ready:
+                proc.kill()
+                raise AssertionError(f"{script.name} blocked waiting for input")
+            try:
+                data = os.read(master, 4096)
+            except OSError:  # the child closed its end
+                break
+            if not data:
+                break
+            chunks.append(data)
+        return b"".join(chunks).decode(errors="replace"), proc.wait(timeout=timeout)
+    finally:
+        os.close(master)
+        if slave is not None:
+            os.close(slave)
+        if proc is not None and proc.poll() is None:  # pragma: no cover - safety net
+            proc.kill()
+            proc.wait()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX shell script")
+def test_the_debian_postinst_asks_for_the_token_once(tmp_path):
+    output, code = _run_with_a_terminal(_deb_script(tmp_path), "MTk4NzY1NDMy.MTEyMjMzNDQ1.NjY3ODg5\n")
+
+    assert code == 0
+    env = (tmp_path / "etc" / "lofi.env").read_text()
+    assert "LOFI_TOKEN=MTk4NzY1NDMy.MTEyMjMzNDQ1.NjY3ODg5" in env
+    assert "#LOFI_TOKEN=your-bot-token-here" not in env   # the placeholder is replaced
+    assert "Saved to" in output
+    assert oct((tmp_path / "etc" / "lofi.env").stat().st_mode & 0o777) == "0o600"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX shell script")
+def test_the_debian_postinst_never_asks_when_there_is_nobody_to_answer(tmp_path):
+    """apt, Docker builds and configuration management: no tty, no hang."""
+    script = _deb_script(tmp_path)
+
+    result = subprocess.run(
+        ["/bin/sh", str(script)], input="", capture_output=True, text=True,
+        timeout=60, env=_installer_env(),
+    )
+
+    assert result.returncode == 0
+    assert "Discord bot token" not in result.stdout       # never prompts
+    assert "sudo editor" in result.stdout                 # says where to put it instead
+    # the example's commented placeholder is all that is in there
+    assert not any(
+        line.startswith("LOFI_TOKEN=") for line in (tmp_path / "etc" / "lofi.env").read_text().splitlines()
+    )
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX shell script")
+def test_the_debian_postinst_leaves_an_existing_token_alone(tmp_path):
+    """An upgrade must not re-ask, and must not overwrite what is there."""
+    (tmp_path / "etc").mkdir()
+    (tmp_path / "etc" / "lofi.env").write_text("LOFI_TOKEN=already.here.token\n")
+
+    output, code = _run_with_a_terminal(_deb_script(tmp_path), "a-token-that-must-not-be-read\n")
+
+    assert code == 0
+    assert "Discord bot token" not in output
+    assert (tmp_path / "etc" / "lofi.env").read_text() == "LOFI_TOKEN=already.here.token\n"
+
+
+def test_the_debian_postinst_prompt_is_guarded_on_every_side():
+    text = (ROOT / "packaging" / "debian" / "postinst").read_text()
+    assert "[ -t 0 ]" in text                              # a terminal, or no prompt
+    assert "noninteractive" in text                        # debconf's own opt-out
+    assert "${LOFI_TOKEN:-}" in text                       # already exported: no prompt
+    # and the answer lands where the systemd unit reads it from
+    assert "printf 'LOFI_TOKEN=%s\\n'" in text
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX shell script")
+def test_the_macos_postinstall_asks_for_the_token_once(tmp_path):
+    output, code = _run_with_a_terminal(_macos_script(tmp_path), "MTk4NzY1NDMy.MTEyMjMzNDQ1.NjY3ODg5\n")
+
+    assert code == 0
+    config = tmp_path / "Library" / "Application Support" / "lofi" / "config.json"
+    assert json.loads(config.read_text())["bot_token"] == "MTk4NzY1NDMy.MTEyMjMzNDQ1.NjY3ODg5"
+    assert "Saved to" in output
+    assert oct(config.stat().st_mode & 0o777) == "0o600"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX shell script")
+def test_the_macos_postinstall_never_asks_when_a_token_is_already_stored(tmp_path):
+    config_dir = tmp_path / "Library" / "Application Support" / "lofi"
+    config_dir.mkdir(parents=True)
+    (config_dir / "config.json").write_text('{"bot_token": "already.here.token"}\n')
+
+    output, code = _run_with_a_terminal(_macos_script(tmp_path), "a-token-that-must-not-be-read\n")
+
+    assert code == 0
+    assert "Discord bot token" not in output
+    assert json.loads((config_dir / "config.json").read_text())["bot_token"] == "already.here.token"
+
+
+def test_the_macos_postinstall_refuses_a_token_that_would_break_the_json():
+    """It is interpolated into a JSON file, so quotes and backslashes are refused."""
+    save_token = (ROOT / "packaging" / "macos" / "postinstall").read_text()
+    save_token = save_token.split("save_token() {", 1)[1].split("\n}\n", 1)[0]
+    assert '\\"' in save_token      # a double quote
+    assert "\\\\" in save_token    # a backslash
+    assert "2>/dev/null || true" in save_token or "return 1" in save_token
+
+
+def test_the_nsis_installer_asks_for_the_token_on_one_page():
+    nsi = (ROOT / "packaging" / "windows" / "installer.nsi").read_text()
+    assert "Page custom TokenPage TokenPageLeave" in nsi
+    assert "nsDialogs::Create 1018" in nsi                  # MUI2 brings nsDialogs in
+    assert "${NSD_CreateText}" in nsi
+    # pre-filled from what is stored, so an upgrade keeps its token
+    assert 'ReadRegStr $TokenValue HKCU "Environment" "LOFI_TOKEN"' in nsi
+    # ...and written to the user environment, which is what LOFI_TOKEN reads
+    assert 'WriteRegStr HKCU "Environment" "LOFI_TOKEN" "$TokenValue"' in nsi
+
+
+def test_the_nsis_installer_never_deletes_a_token_it_did_not_put_there():
+    """LOFI_TOKEN is a user setting, not part of the payload: leave it alone."""
+    nsi = (ROOT / "packaging" / "windows" / "installer.nsi").read_text()
+    uninstaller = nsi.split('Section "Uninstall"', 1)[1]
+    assert "DeleteRegValue" not in uninstaller
+    assert "LOFI_TOKEN" in uninstaller                     # it says where it is instead
 
 
 # --------------------------------------------------------------------------- #

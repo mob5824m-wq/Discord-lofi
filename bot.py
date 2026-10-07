@@ -14,6 +14,12 @@ what to install for whatever is missing, because a voice bot that cannot play
 audio otherwise fails silently - it joins the channel, says nothing, and logs
 nothing.
 
+A first run has no token to read, so it asks for one and stores it in
+``config.json``: that single question is the whole first-run setup, and no
+later run asks again. The prompt is skipped when stdin is not a terminal -
+systemd, Docker and pipes have nobody to answer it, and those runs are told
+what to set instead of blocking on a read that never comes.
+
 Everything else is optional and degrades on its own:
 
 * **yt-dlp** - only needed for YouTube stations. Without it, the internet-radio
@@ -451,6 +457,7 @@ def _check_rows() -> list[tuple[str, str, str, list[str]]]:
             else [
                 "Put the token in config.json as \"bot_token\", or export LOFI_TOKEN.",
                 "Create the application at https://discord.com/developers/applications",
+                "Or run Lofi with no token set: the first run asks for it.",
             ],
         )
     )
@@ -568,6 +575,58 @@ def run_check() -> int:
 # --------------------------------------------------------------------------- #
 # Entry point
 # --------------------------------------------------------------------------- #
+def _stdin_is_interactive() -> bool:
+    """True when there is a person at the keyboard to answer a prompt.
+
+    ``sys.stdin`` is absent in some frozen contexts and raises when read from
+    after being closed, so neither is assumed.
+    """
+    stream = getattr(sys, "stdin", None)
+    if stream is None:
+        return False
+    try:
+        return bool(stream.isatty())
+    except (AttributeError, ValueError):  # pragma: no cover - exotic streams
+        return False
+
+
+def _prompt_for_token(config: dict) -> str:
+    """Ask for the bot token when there is none, save it, and return it.
+
+    A first run is one question. The token is the only thing Lofi cannot work
+    out for itself - ffmpeg, libopus, the music folder and the dashboard key
+    each have a default, a fallback or a diagnostic that names the fix - so the
+    prompt asks for exactly that, and the answer is written to ``config.json``
+    so the next run starts without asking.
+
+    An empty answer is not an error: it falls through to the instructions that
+    say where the token goes, which is also what a non-interactive run gets.
+    """
+    if not _stdin_is_interactive():
+        return ""
+    print("First run - Lofi needs a Discord bot token to connect.")
+    print("Create one at https://discord.com/developers/applications -> Bot -> Reset Token.")
+    try:
+        entered = input("Bot token: ").strip()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return ""
+    if not entered:
+        return ""
+    updated = dict(config)
+    updated["bot_token"] = entered
+    try:
+        paths.write_config(updated)
+    except OSError as exc:
+        # The token is still good for this run; it just will not be remembered.
+        logger.warning("Could not save the token to %s: %s", paths.config_write_path(), exc)
+    else:
+        config.clear()
+        config.update(updated)
+        print(f"Saved to {paths.config_write_path()} - you will not be asked again.\n")
+    return entered
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="lofi",
@@ -689,6 +748,8 @@ def main(argv: Optional[list[str]] = None) -> int:
         return 0
 
     token = str(config.get("bot_token") or os.environ.get("LOFI_TOKEN") or "").strip()
+    if not token:
+        token = _prompt_for_token(config)
     if not token:
         print(
             "No bot token found. Put it in config.json as \"bot_token\" (or export LOFI_TOKEN).\n"

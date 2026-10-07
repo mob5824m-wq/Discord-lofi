@@ -382,7 +382,7 @@ Four rules the code follows consistently, worth keeping if you add to it:
 
 ## How it is tested
 
-839 pytest tests, no network, no Discord token, ~50 s. The strategy is **seams and fakes**, because
+884 pytest tests, no network, no Discord token, ~50 s. The strategy is **seams and fakes**, because
 the untestable part (a real voice connection) is the smallest part:
 
 - **Real aiohttp.** `tests/test_dashboard.py` builds the actual application through

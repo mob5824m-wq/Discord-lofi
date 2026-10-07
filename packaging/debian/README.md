@@ -7,8 +7,14 @@ sudo dpkg -i lofi-linux-amd64.deb && sudo apt-get install -f -y   # amd64
 sudo dpkg -i lofi-linux-arm64.deb && sudo apt-get install -f -y   # arm64: Pi, Graviton
 sudo apt install ffmpeg libopus0            # runtime deps, not bundled
 lofi --check                                # binary at /usr/local/bin/lofi
-LOFI_TOKEN=... lofi
+lofi                                        # asks for the token if it has none
 ```
+
+`postinst` asks for the bot token when it is run interactively on a machine
+that does not have one yet, and writes it into `/etc/lofi/lofi.env` (0600).
+Under `apt`, a Docker build or configuration management there is nobody to
+answer, so it asks nothing and prints the instructions instead — a blocking
+read there would hang the install.
 
 ## What is inside
 
