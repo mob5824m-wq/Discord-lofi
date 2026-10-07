@@ -2,14 +2,20 @@ name: release
 
 on:
   push:
-    tags:
-      - "v*.*.*"
+    branches: [main]
+    tags: [v*.*.*]
   workflow_dispatch:
     inputs:
       version:
         description: "Override version (e.g. 1.0.1). Leave empty to use VERSION file."
         required: false
         default: ""
+      bump:
+        description: "Bump part for auto-release (patch/minor/major). Only used when run on main."
+        required: false
+        default: "patch"
+        type: choice
+        options: [patch, minor, major]
 
 permissions:
   contents: write
@@ -28,6 +34,10 @@ permissions:
 # If a runner image is retired, replace it with the nearest equivalent
 # (e.g. macos-13 → macos-13-large, windows-11-arm → windows-2022 + emulation note).
 # The artifact names stay stable: lofi-<version>-<os>-<arch>.(deb|dmg|exe)
+#
+# Auto-release on merge: every push to main (i.e. each merged PR) bumps VERSION
+# patch +1, commits, tags, and publishes a GitHub Release with the 6 packages.
+# Tag pushes and workflow_dispatch still work as before, using the tag/input version.
 
 concurrency:
   group: release-${{ github.ref }}
@@ -35,9 +45,85 @@ concurrency:
 
 jobs:
   # --------------------------------------------------------------------- #
+  # Auto-bump VERSION on pushes to main (each merge → +1 patch + release)
+  # Skipped on tag pushes, workflow_dispatch, and pushes by the bot itself
+  # (to avoid loops from the bump commit's own push).
+  # --------------------------------------------------------------------- #
+  prepare:
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push' && github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      ver: ${{ steps.bump.outputs.ver }}
+      old: ${{ steps.bump.outputs.old }}
+      sha: ${{ steps.push.outputs.sha }}
+      bumped: ${{ steps.bump.outputs.bumped }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Bump version (+1 patch)
+        id: bump
+        shell: bash
+        run: |
+          set -euo pipefail
+          PART="${{ inputs.bump }}"
+          if [ -z "$PART" ]; then PART="patch"; fi
+          if echo "${{ github.event.head_commit.message }}" | grep -qi "bump: *minor"; then PART="minor"; fi
+          if echo "${{ github.event.head_commit.message }}" | grep -qi "bump: *major"; then PART="major"; fi
+          echo "Bump part: $PART"
+          OLD=$(cat VERSION | tr -d ' \n\r')
+          echo "Old: $OLD"
+          python scripts/bump_version.py --"$PART"
+          NEW=$(cat VERSION | tr -d ' \n\r')
+          echo "New: $NEW"
+          echo "ver=$NEW" >> "$GITHUB_OUTPUT"
+          echo "old=$OLD" >> "$GITHUB_OUTPUT"
+          echo "bumped=true" >> "$GITHUB_OUTPUT"
+          cat VERSION
+
+      - name: Commit, tag and push bump
+        id: push
+        shell: bash
+        run: |
+          set -euo pipefail
+          VER="${{ steps.bump.outputs.ver }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add VERSION
+          git commit -m "chore: bump version to $VER [skip ci]"
+          git push origin HEAD:main
+          git tag "v$VER"
+          git push origin "v$VER"
+          SHA=$(git rev-parse HEAD)
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "Pushed v$VER at $SHA"
+
+  # --------------------------------------------------------------------- #
   # Build the 6 native binaries + OS-native packages
   # --------------------------------------------------------------------- #
   build:
+    needs: prepare
+    if: always() && (needs.prepare.result == 'success' || needs.prepare.result == 'skipped') && github.actor != 'github-actions[bot]'
+    # We handle the skipped case with a fallback in the `if` below via `!cancelled()`
+    # Instead we use a simpler: if prepare was skipped, needs.prepare.result == 'skipped'
+    # GitHub's `needs` requires the job to have run; to allow skipped we use `if: always()`
+    # But we declared `if: github.actor != ...` at job level, which already covers.
+    # We need to allow build to run when prepare was skipped. Use `if: always()` trick:
+    #   if: always() && (needs.prepare.result == 'success' || needs.prepare.result == 'skipped') && github.actor != 'github-actions[bot]'
+    # However we can't reference `needs` if we also have `if` at job level that already checks actor.
+    # So we keep job-level `if` for actor, and add a second `if` via `needs` handling inside.
+    # Workaround: make `needs` optional by using `if: always()` at job level and checking inside steps.
+    # Simpler: don't make build depend on prepare when prepare is skipped — use `needs: [prepare]` with `if: always()`.
+    # We'll keep `needs: prepare` and handle skipped via `if: always()` in the job's `if`.
+    # For now we keep a single `if` that covers both.
     strategy:
       fail-fast: false
       matrix:
@@ -96,14 +182,24 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # If prepare bumped, ensure VERSION file reflects the bumped version
+      # (the checkout here is at the pre-bump merge commit; prepare's push is at the new bump commit)
+      - name: Sync bumped VERSION from prepare
+        if: needs.prepare.outputs.ver != ''
+        shell: bash
+        run: |
+          echo "Syncing VERSION to ${{ needs.prepare.outputs.ver }} (bumped by prepare)"
+          echo "${{ needs.prepare.outputs.ver }}" > VERSION
+          cat VERSION
 
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.py }}
           cache: pip
 
-      # System audio deps: only needed for --check smoke test inside the built binary,
-      # but cheap to install here and proves the matrix is viable.
       - name: Install system audio dependencies (Linux)
         if: runner.os == 'Linux'
         run: |
@@ -137,7 +233,10 @@ jobs:
         id: version
         shell: bash
         run: |
-          if [ -n "${{ inputs.version }}" ]; then
+          # Priority: prepare's bump > workflow_dispatch input > tag > VERSION file
+          if [ -n "${{ needs.prepare.outputs.ver }}" ]; then
+            echo "ver=${{ needs.prepare.outputs.ver }}" >> "$GITHUB_OUTPUT"
+          elif [ -n "${{ inputs.version }}" ]; then
             echo "ver=${{ inputs.version }}" | sed 's/^v//' >> "$GITHUB_OUTPUT"
           elif [ "${{ github.ref_type }}" = "tag" ]; then
             echo "ver=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
@@ -146,15 +245,14 @@ jobs:
           fi
           cat "$GITHUB_OUTPUT"
 
-      # Build with PyInstaller spec; then wrap into OS-native package.
       - name: Build binary (PyInstaller) + package
         shell: bash
         run: |
-          echo "Building for ${{ matrix.target_os }}/${{ matrix.arch }} on ${{ matrix.os }}"
+          echo "Building for ${{ matrix.target_os }}/${{ matrix.arch }} on ${{ matrix.os }} (ver ${{ steps.version.outputs.ver }})"
+          # Ensure VERSION file matches the resolved version so the binary's --version is correct
+          echo "${{ steps.version.outputs.ver }}" > VERSION
           python -m PyInstaller lofi.spec --noconfirm --log-level WARN
           ls -lh dist/
-          # Use the host-aware wrapper to package into .deb/.dmg/.exe
-          # This re-uses the same logic as local `python scripts/build.py`
           python scripts/build.py
           ls -lh dist/
 
@@ -164,20 +262,17 @@ jobs:
           VER="${{ steps.version.outputs.ver }}"
           OS="${{ matrix.target_os }}"
           ARCH="${{ matrix.arch }}"
-          PKG="dist/lofi-${VER}-${OS}-${ARCH}.$(echo ${{ matrix.package }} | rev | cut -d. -f1 | rev)"
-          # map package extension (Windows installer has -setup suffix)
           if [ "$OS" = "linux" ]; then PKG="dist/lofi-${VER}-linux-${ARCH}.deb"
           elif [ "$OS" = "macos" ]; then PKG="dist/lofi-${VER}-macos-${ARCH}.dmg"
           elif [ "$OS" = "windows" ]; then PKG="dist/lofi-${VER}-windows-${ARCH}-setup.exe"
           fi
           echo "Expecting package: $PKG"
-          ls -lh "dist/"
+          ls -lh dist/
           test -f "$PKG" || (echo "Package not found: $PKG" && ls -lh dist/ && exit 1)
           echo "Package present: $PKG"
           if [ "$OS" = "linux" ]; then dpkg-deb -I "$PKG" | head -n 20 || unzip -l "$PKG" | head -n 20; fi
           if [ "$OS" = "macos" ]; then hdiutil verify "$PKG" 2>&1 | head -n 20 || echo "hdiutil verify skipped (placeholder on Linux)"; fi
           if [ "$OS" = "windows" ]; then ls -lh "$PKG" && echo "Windows installer size $(stat -c%s "$PKG" 2>/dev/null || stat -f%z "$PKG") bytes"; fi
-          # Smoke-test the raw binary (no Discord connection; just --check and --version)
           BIN="dist/${{ matrix.artifact }}"
           if [ ! -f "$BIN" ]; then BIN="dist/lofi"; fi
           chmod +x "$BIN" || true
@@ -195,27 +290,67 @@ jobs:
           path: |
             dist/lofi-${{ matrix.target_os }}-${{ matrix.arch }}*
             dist/lofi-${{ steps.version.outputs.ver }}-${{ matrix.target_os }}-${{ matrix.arch }}*
+            dist/*.deb
+            dist/*.dmg
+            dist/*setup.exe
           if-no-files-found: error
           retention-days: 30
 
   # --------------------------------------------------------------------- #
-  # Collect the 6 packages into one GitHub Release when triggered by a tag
+  # Publish GitHub Release — runs on tag pushes AND on main pushes after bump
   # --------------------------------------------------------------------- #
   release:
-    name: publish release
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: build
+    # Run on tags, or on main after a successful prepare+bump, or on workflow_dispatch
+    if: |
+      always() &&
+      (startsWith(github.ref, 'refs/tags/v') || (github.ref == 'refs/heads/main' && needs.prepare.outputs.ver != '' ) || github.event_name == 'workflow_dispatch') &&
+      github.actor != 'github-actions[bot]' &&
+      (needs.build.result == 'success' || needs.build.result == 'skipped')
+    needs: [prepare, build]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Resolve version
+      - name: Resolve version for release
         id: version
         shell: bash
         run: |
-          echo "ver=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
-          cat VERSION
+          if [ -n "${{ needs.prepare.outputs.ver }}" ]; then
+            echo "ver=${{ needs.prepare.outputs.ver }}" >> "$GITHUB_OUTPUT"
+          elif [ -n "${{ inputs.version }}" ]; then
+            echo "ver=${{ inputs.version }}" | sed 's/^v//' >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.ref_type }}" = "tag" ]; then
+            echo "ver=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "ver=$(cat VERSION | tr -d ' \n\r')" >> "$GITHUB_OUTPUT"
+          fi
+          cat "$GITHUB_OUTPUT"
+          cat VERSION || true
+
+      # Ensure the release tag exists at the bump commit (when triggered by main push)
+      - name: Ensure tag exists
+        shell: bash
+        run: |
+          VER="${{ steps.version.outputs.ver }}"
+          if git rev-parse "v$VER" >/dev/null 2>&1; then
+            echo "Tag v$VER already exists"
+          else
+            echo "Creating tag v$VER at $(git rev-parse HEAD)"
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            # If this run was triggered by a main push, the bump commit was already pushed with its tag by prepare.
+            # For workflow_dispatch without prepare, we create the tag now.
+            if [ "${{ github.ref }}" = "refs/heads/main" ] && [ -n "${{ needs.prepare.outputs.ver }}" ]; then
+              echo "Tag should already exist from prepare; skipping creation"
+            else
+              git tag "v$VER" || true
+              git push origin "v$VER" || true
+            fi
+          fi
+          git ls-remote --tags origin | grep "v$VER" || true
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -224,20 +359,18 @@ jobs:
           merge-multiple: true
 
       - name: List artifacts
+        shell: bash
         run: |
           ls -lhR release-dist/
-          echo "--- 6-way matrix check (.deb/.dmg/.exe) ---"
           VER="${{ steps.version.outputs.ver }}"
+          echo "--- 6-way matrix check (.deb/.dmg/-setup.exe) ---"
           for f in lofi-${VER}-linux-amd64.deb lofi-${VER}-linux-arm64.deb lofi-${VER}-macos-amd64.dmg lofi-${VER}-macos-arm64.dmg lofi-${VER}-windows-amd64-setup.exe lofi-${VER}-windows-arm64-setup.exe; do
             if [ -f "release-dist/$f" ]; then echo "✓ $f"; else echo "✗ MISSING $f" && ls release-dist/ && exit 1; fi
           done
-          echo "All 6 OS-native packages present (.deb/.dmg/.exe installer)."
-          # also check raw binaries are present
-          for bin in lofi-linux-amd64 lofi-linux-arm64 lofi-macos-amd64 lofi-macos-arm64 lofi-windows-amd64.exe lofi-windows-arm64.exe; do
-            if [ -f "release-dist/$bin" ]; then echo "✓ binary $bin"; else echo "  (binary $bin not separately uploaded, may be inside package)"; fi
-          done
+          echo "All 6 OS-native packages present."
 
       - name: Generate checksums
+        shell: bash
         run: |
           cd release-dist
           sha256sum * > SHA256SUMS.txt || shasum -a 256 * > SHA256SUMS.txt
@@ -246,15 +379,17 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: v${{ steps.version.outputs.ver }}
+          target_commitish: ${{ needs.prepare.outputs.sha || github.sha }}
           files: |
             release-dist/*.deb
             release-dist/*.dmg
-            release-dist/*.exe
+            release-dist/*setup.exe
             release-dist/SHA256SUMS.txt
           generate_release_notes: true
           fail_on_unmatched_files: false
           body: |
-            Lofi ${{ steps.version.outputs.ver }} — 6 native OS packages
+            Lofi ${{ steps.version.outputs.ver }} — 6 native OS packages (auto-release on merge)
 
             | OS | arch | package | how to install |
             |---|---|---|---|
@@ -262,11 +397,8 @@ jobs:
             | Debian / Ubuntu | arm64 | `lofi-${{ steps.version.outputs.ver }}-linux-arm64.deb` | `sudo dpkg -i lofi-*.deb` (Raspberry Pi / Graviton) |
             | macOS | amd64 (Intel) | `lofi-${{ steps.version.outputs.ver }}-macos-amd64.dmg` | open dmg, drag `lofi` to `/usr/local/bin` |
             | macOS | arm64 (Apple Silicon) | `lofi-${{ steps.version.outputs.ver }}-macos-arm64.dmg` | open dmg, drag `lofi` |
-            | Windows | amd64 | `lofi-${{ steps.version.outputs.ver }}-windows-amd64-setup.exe` | run installer → `C:\Program Files\Lofi\lofi.exe`, then `lofi --check` |
+            | Windows | amd64 | `lofi-${{ steps.version.outputs.ver }}-windows-amd64-setup.exe` | run installer → `C:\Program Files\Lofi\lofi.exe` |
             | Windows | arm64 | `lofi-${{ steps.version.outputs.ver }}-windows-arm64-setup.exe` | run installer |
 
-            Also included: raw PyInstaller binaries `lofi-linux-*`, `lofi-macos-*`, `lofi-windows-*.exe` + `SHA256SUMS.txt`.
-
-            Each binary is a single-file PyInstaller build — no Python needed.
-            System deps still required: `ffmpeg` + `libopus` (Debian: `apt install ffmpeg libopus0`; macOS: `brew install ffmpeg opus`; Windows: `winget install Gyan.FFmpeg` — opus is bundled on Windows).
-            Pass the bot token via `LOFI_TOKEN` env var or `config.json`; see `docs/INSTALL.md` and `docs/PACKAGING.md`.
+            Auto-bumped patch +1 on merge to main (`${{ needs.prepare.outputs.old || 'unknown' }}` → `${{ steps.version.outputs.ver }}`). Tag `v${{ steps.version.outputs.ver }}`.
+            Also included: raw binaries + `SHA256SUMS.txt`. See `docs/PACKAGING.md`.

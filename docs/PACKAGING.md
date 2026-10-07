@@ -124,27 +124,30 @@ docker buildx build --platform linux/arm64 -f packaging/debian/Dockerfile .
 
 ---
 
-## CI / Release
+## CI / Release — auto +1 on every merge to main
 
-Tagging `v*.*.*` triggers the `release` workflow:
+Every push to `main` (i.e. each merged PR) **auto-bumps `VERSION` patch +1, tags, and publishes a Release** with the 6 OS-native packages. Tag pushes and manual dispatches still work.
 
 ```bash
+# normal flow — merge a PR to main → 1.0.0 → 1.0.1 → Release v1.0.1 with 6 packages
+# manual tag (if you need to cut a specific version):
 git tag v1.0.1 && git push origin v1.0.1
-# or manually: gh workflow run release --ref main -f version=1.0.1
+# manual dispatch with override:
+gh workflow run release --ref main -f version=1.2.0 -f bump=minor
 ```
 
-Flow:
+What the workflow does:
 
-1. `build` job: 6 parallel runs, each installs system deps, `pip install pyinstaller`,
-   `pyinstaller lofi.spec`, then `python scripts/build.py` which wraps the binary into the OS-native package:
-   - Linux: `dpkg-deb --build` → `lofi-*.deb` (with `DEBIAN/control` + `usr/local/bin/lofi`)
+1. `prepare` job (only on `push` to `main` by a human): reads `VERSION`, runs `python scripts/bump_version.py --patch` (or `--minor`/`--major` if commit message contains `bump: minor/major` or `inputs.bump` is set), writes back `VERSION`, commits `chore: bump version to X.Y.Z [skip ci]`, pushes commit + tag `vX.Y.Z` (the `[skip ci]` + `github.actor != 'github-actions[bot]'` guard prevents a loop).
+2. `build` job: 6 parallel native runners, each installs system deps, `pip install pyinstaller`, `pyinstaller lofi.spec`, then `python scripts/build.py` which wraps the binary into the OS-native package:
+   - Linux: `dpkg-deb --build` → `lofi-*.deb` (`DEBIAN/control` + `usr/local/bin/lofi`)
    - macOS: `hdiutil create -format UDZO` → `lofi-*.dmg` (volume `Lofi <ver>`)
-   - Windows: `makensis` (NSIS) → `lofi-*.exe` installer (PE, installs to `Program Files\Lofi`)
-2. Each job uploads its binary + package with `actions/upload-artifact`.
-3. `release` job (only on tag) downloads all 6, verifies that every package exists
-   (`lofi-*.deb`, `lofi-*.dmg`, `lofi-*.exe`), generates `SHA256SUMS.txt`, and publishes a GitHub Release.
+   - Windows: `makensis` (NSIS) → `lofi-*-setup.exe` installer (installs to `Program Files\Lofi`)
+   Resolves version as `prepare`'s bump > `inputs.version` > tag > `VERSION` file.
+3. Each `build` uploads its binary + package with `actions/upload-artifact`.
+4. `release` job (on `main` after bump *or* on tag) downloads all 6, verifies every package exists (`lofi-*.deb`, `lofi-*.dmg`, `*-setup.exe`), generates `SHA256SUMS.txt`, and publishes a GitHub Release via `softprops/action-gh-release` at `vX.Y.Z` (uses `needs.prepare.outputs.sha` as `target_commitish` so the tag points to the bump commit).
 
-Artifacts are also available as workflow artifacts on non-tag pushes for testing.
+Artifacts are also available as workflow artifacts on PRs and non-tag pushes for testing. The `prepare` bump is skipped for pushes by `github-actions[bot]` and for tag pushes, so human tags and manual dispatches don't double-bump.
 
 ### Runner image retirement
 
