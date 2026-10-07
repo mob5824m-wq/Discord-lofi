@@ -1,0 +1,1596 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <!-- A favicon that is not the browser's default globe: people run this next to
+       another bot's dashboard, and two identical tabs on 127.0.0.1 are two tabs
+       you have to click to tell apart. Inline SVG as a data: URI, because the
+       CSP allows img-src 'self' data: and there is no asset pipeline here. -->
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='15' fill='%230a0910'/%3E%3Ccircle cx='16' cy='16' r='14' fill='none' stroke='%23b18cff' stroke-opacity='.55' stroke-width='2'/%3E%3Ccircle cx='16' cy='16' r='9' fill='none' stroke='%23ffc7a1' stroke-opacity='.35' stroke-width='1.5'/%3E%3Ccircle cx='16' cy='16' r='5' fill='%23b18cff'/%3E%3Ccircle cx='16' cy='16' r='1.7' fill='%230a0910'/%3E%3C/svg%3E">
+  <title>Lofi · Studio Console</title>
+  <style>
+    :root {
+      --bg: #0a0910;
+      --panel: #141220;
+      --panel-2: #1a1729;
+      --panel-3: #221e33;
+      --line: rgba(233, 238, 245, .1);
+      --text: #f4f2f8;
+      --muted: #9a93ab;
+      --soft: #c9c3d6;
+      --accent: #b18cff;
+      --accent-2: #ffc7a1;
+      --green: #34d399;
+      --yellow: #f4bd50;
+      --red: #fb7185;
+      --blue: #7fb3ff;
+      --radius: 16px;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      min-height: 100vh; margin: 0; color: var(--text);
+      background:
+        radial-gradient(ellipse at 78% -18%, rgba(177,140,255,.17), transparent 46%),
+        radial-gradient(ellipse at 4% 106%, rgba(255,199,161,.09), transparent 44%),
+        var(--bg);
+    }
+    button, input, select, textarea { font: inherit; color: inherit; }
+    button { cursor: pointer; }
+    .hidden { display: none !important; }
+    code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+    /* ---------------- login ---------------- */
+    .login-wrap { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
+    .login-card {
+      width: min(460px, 100%); padding: 36px; border: 1px solid var(--line); border-radius: 24px;
+      background: linear-gradient(145deg, rgba(34,30,51,.98), rgba(18,16,28,.98));
+      box-shadow: 0 30px 90px rgba(0,0,0,.5);
+    }
+    .brand-mark {
+      width: 48px; height: 48px; display: grid; place-items: center; border-radius: 15px; color: #1a1024;
+      background: linear-gradient(140deg, #d9c2ff, #8d63e8); font-size: 22px;
+      box-shadow: 0 8px 28px rgba(177,140,255,.3);
+    }
+    .login-card h1 { margin: 22px 0 8px; font-size: 26px; letter-spacing: -.5px; }
+    .login-card p.lede { margin: 0 0 26px; color: var(--muted); line-height: 1.55; font-size: 13.5px; }
+    label { display: block; margin-bottom: 8px; color: var(--soft); font-size: 13px; font-weight: 650; }
+    input, select, textarea {
+      width: 100%; min-height: 42px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 11px;
+      background: rgba(255,255,255,.035); color: var(--text); font-size: 13px;
+    }
+    input:focus, select:focus, textarea:focus { outline: none; border-color: rgba(177,140,255,.5); background: rgba(177,140,255,.07); }
+    textarea { min-height: 76px; resize: vertical; }
+    select option { background: #171425; }
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 42px;
+      padding: 10px 16px; border: 1px solid transparent; border-radius: 11px;
+      background: linear-gradient(140deg, #c3a4ff, #8d63e8); color: #170f24;
+      font-size: 13px; font-weight: 720; transition: .18s ease;
+    }
+    .btn:hover { filter: brightness(1.07); }
+    .btn:disabled { opacity: .5; cursor: not-allowed; }
+    .btn.secondary { background: rgba(255,255,255,.05); border-color: var(--line); color: var(--soft); }
+    .btn.secondary:hover { background: rgba(177,140,255,.12); color: var(--text); }
+    .btn.danger { background: rgba(251,113,133,.14); border-color: rgba(251,113,133,.34); color: #ffc3cd; }
+    .btn.small { min-height: 34px; padding: 7px 12px; font-size: 12px; border-radius: 9px; }
+    .btn.wide { width: 100%; }
+    .login-error {
+      margin: 12px 0 0; padding: 10px 12px; border: 1px solid rgba(251,113,133,.38); border-radius: 10px;
+      background: rgba(251,113,133,.1); color: #ffb4c0; font-size: 12px; font-weight: 620; line-height: 1.5;
+    }
+    .key-help { margin-top: 22px; padding-top: 17px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; line-height: 1.55; }
+    .key-help-title { margin-bottom: 10px; color: var(--soft); font-size: 12px; font-weight: 720; }
+    .key-help ol { margin: 0; padding-left: 19px; display: grid; gap: 9px; }
+    .key-cmd code {
+      display: block; margin-top: 6px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 9px;
+      background: rgba(255,255,255,.04); color: #d9d3e6; font-size: 11.5px; white-space: nowrap; overflow-x: auto;
+    }
+
+    /* ---------------- shell ---------------- */
+    .shell { min-height: 100vh; display: grid; grid-template-columns: 250px minmax(0, 1fr); }
+    .sidebar {
+      position: sticky; top: 0; height: 100vh; display: flex; flex-direction: column;
+      padding: 23px 16px 16px; border-right: 1px solid var(--line);
+      background: rgba(14,12,22,.9); backdrop-filter: blur(16px);
+    }
+    .brand { display: flex; align-items: center; gap: 12px; padding: 0 8px 22px; }
+    .brand .brand-mark { width: 38px; height: 38px; border-radius: 12px; font-size: 18px; }
+    .brand-title { font-size: 14px; font-weight: 760; letter-spacing: .1px; }
+    .brand-sub { margin-top: 4px; color: var(--muted); font-size: 11px; }
+    .side-label { padding: 8px 11px; color: #7f7891; font-size: 10px; font-weight: 750; letter-spacing: 1.5px; text-transform: uppercase; }
+    .nav { display: grid; gap: 5px; }
+    .nav-btn {
+      display: flex; align-items: center; gap: 12px; width: 100%; padding: 11px 12px;
+      border: 1px solid transparent; border-radius: 11px; background: transparent; color: #a9a2ba;
+      text-align: left; font-size: 13px; font-weight: 620; transition: .18s ease;
+    }
+    .nav-btn:hover { background: rgba(255,255,255,.035); color: var(--text); }
+    .nav-btn.active { border-color: rgba(177,140,255,.24); background: rgba(177,140,255,.13); color: #ddccff; }
+    .nav-icon { width: 18px; text-align: center; font-size: 15px; }
+    .nav-badge { margin-left: auto; padding: 1px 7px; border-radius: 999px; background: rgba(52,211,153,.16); color: #86e6c1; font-size: 10px; font-weight: 700; }
+    .side-spacer { flex: 1; }
+    .connection-card { margin: 12px 4px 14px; padding: 12px; border: 1px solid var(--line); border-radius: 13px; background: rgba(255,255,255,.025); }
+    .connection-row { display: flex; align-items: center; gap: 8px; color: var(--soft); font-size: 12px; font-weight: 650; }
+    .pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 4px rgba(52,211,153,.12); }
+    .pulse.off { background: var(--yellow); box-shadow: 0 0 0 4px rgba(244,189,80,.12); }
+    .connection-sub { margin: 7px 0 0 15px; color: var(--muted); font-size: 11px; }
+    .side-bottom { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 8px 0; border-top: 1px solid var(--line); }
+    .operator-name { color: var(--soft); font-size: 12px; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .operator-desc { margin-top: 3px; color: var(--muted); font-size: 10px; }
+    .icon-btn { display: grid; place-items: center; width: 34px; height: 34px; border: 1px solid var(--line); border-radius: 10px; background: transparent; color: var(--muted); }
+    .icon-btn:hover { color: var(--text); background: var(--panel-3); }
+
+    .main { min-width: 0; padding: 26px clamp(18px, 4vw, 48px) 52px; }
+    .topbar { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 26px; }
+    .eyebrow { color: var(--accent-2); font-size: 10px; font-weight: 780; letter-spacing: 1.45px; text-transform: uppercase; }
+    .page-title { margin: 5px 0 0; font-size: clamp(23px, 3vw, 30px); letter-spacing: -.8px; }
+    .page-subtitle { margin: 6px 0 0; color: var(--muted); font-size: 13px; max-width: 62ch; line-height: 1.5; }
+    .top-actions { display: flex; align-items: center; gap: 10px; }
+    .server-picker { min-width: 230px; max-width: 340px; }
+    .page { display: none; animation: fade-in .22s ease; }
+    .page.active { display: block; }
+    @keyframes fade-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+
+    /* ---------------- cards & grids ---------------- */
+    .grid { display: grid; gap: 16px; }
+    .stats { grid-template-columns: repeat(4, minmax(0, 1fr)); margin-bottom: 18px; }
+    .stat-card, .card {
+      border: 1px solid var(--line); border-radius: var(--radius);
+      background: linear-gradient(145deg, rgba(30,26,46,.94), rgba(19,17,30,.94));
+      box-shadow: 0 10px 34px rgba(0,0,0,.16);
+    }
+    .stat-card { min-height: 118px; padding: 18px 19px; }
+    .stat-head { display: flex; align-items: center; justify-content: space-between; color: var(--muted); font-size: 12px; font-weight: 620; }
+    .stat-icon { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 9px; background: rgba(177,140,255,.14); color: #d6c2ff; }
+    .stat-value { margin-top: 14px; font-size: 29px; line-height: 1; letter-spacing: -.8px; font-weight: 750; }
+    .stat-note { margin-top: 7px; color: var(--muted); font-size: 11px; }
+    .two-col { grid-template-columns: minmax(0, 1.45fr) minmax(280px, .9fr); align-items: start; }
+    .card { padding: 20px; }
+    .card + .card { margin-top: 16px; }
+    .card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; margin-bottom: 16px; }
+    .card-title { margin: 0; font-size: 15px; font-weight: 730; letter-spacing: -.15px; }
+    .card-desc { margin: 5px 0 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
+    .subtle { color: var(--muted); font-size: 11px; }
+
+    .guild-list { display: grid; gap: 8px; }
+    .guild-row {
+      display: flex; align-items: center; gap: 12px; padding: 11px; border: 1px solid transparent;
+      border-radius: 12px; background: rgba(255,255,255,.025); cursor: pointer; transition: .18s ease; text-align: left; width: 100%;
+    }
+    .guild-row:hover { border-color: rgba(177,140,255,.24); background: rgba(177,140,255,.08); }
+    .guild-row.selected { border-color: rgba(177,140,255,.4); background: rgba(177,140,255,.12); }
+    .guild-avatar {
+      display: grid; flex: 0 0 36px; place-items: center; width: 36px; height: 36px; border-radius: 12px;
+      background: #2a2340; color: #ddccff; font-size: 13px; font-weight: 750; overflow: hidden;
+    }
+    .guild-avatar img { width: 100%; height: 100%; object-fit: cover; }
+    .guild-info { min-width: 0; flex: 1; }
+    .guild-name { overflow: hidden; font-size: 12.5px; font-weight: 680; text-overflow: ellipsis; white-space: nowrap; }
+    .guild-meta { margin-top: 4px; color: var(--muted); font-size: 10.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .guild-count { color: var(--soft); font-size: 11px; white-space: nowrap; }
+
+    .quick-actions { display: grid; gap: 10px; }
+    .quick-action {
+      display: flex; align-items: center; gap: 12px; padding: 13px; border: 1px solid var(--line);
+      border-radius: 12px; background: rgba(255,255,255,.02); color: var(--text); text-align: left; transition: .18s ease; width: 100%;
+    }
+    .quick-action:hover { border-color: rgba(177,140,255,.38); background: rgba(177,140,255,.08); }
+    .quick-action .qicon { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 10px; background: rgba(177,140,255,.14); color: #d6c2ff; font-size: 15px; }
+    .quick-action strong { display: block; font-size: 12px; }
+    .quick-action small { display: block; margin-top: 4px; color: var(--muted); font-size: 10.5px; }
+
+    /* ---------------- now playing ---------------- */
+    .now-playing {
+      position: relative; overflow: hidden; padding: 22px;
+      border: 1px solid rgba(177,140,255,.22); border-radius: 20px;
+      background:
+        radial-gradient(ellipse at 88% -30%, rgba(255,199,161,.16), transparent 55%),
+        linear-gradient(145deg, rgba(38,31,60,.96), rgba(20,17,32,.96));
+    }
+    .np-top { display: flex; align-items: center; gap: 16px; }
+    .vinyl {
+      position: relative; flex: 0 0 74px; width: 74px; height: 74px; border-radius: 50%;
+      background: repeating-radial-gradient(circle at 50% 50%, #241f36 0 2px, #1a1628 2px 4px);
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,.07), 0 10px 30px rgba(0,0,0,.4);
+      display: grid; place-items: center; animation: spin 6s linear infinite;
+    }
+    .vinyl.paused { animation-play-state: paused; }
+    .vinyl.stopped { animation: none; opacity: .55; }
+    .vinyl .label { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; background: linear-gradient(140deg, #d9c2ff, #8d63e8); font-size: 14px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .np-main { min-width: 0; flex: 1; }
+    .np-station { color: var(--accent-2); font-size: 10.5px; font-weight: 760; letter-spacing: 1.3px; text-transform: uppercase; }
+    .np-title { margin: 6px 0 0; font-size: clamp(17px, 2.2vw, 22px); font-weight: 730; letter-spacing: -.4px; overflow-wrap: anywhere; }
+    .np-meta { margin-top: 7px; color: var(--muted); font-size: 11.5px; display: flex; flex-wrap: wrap; gap: 10px; }
+    .np-meta span { display: inline-flex; align-items: center; gap: 5px; }
+    .visualizer { display: flex; align-items: flex-end; gap: 3px; height: 26px; }
+    .visualizer i {
+      width: 4px; height: 30%; border-radius: 2px; background: linear-gradient(180deg, var(--accent-2), var(--accent));
+      animation: bounce 1.05s ease-in-out infinite;
+    }
+    .visualizer i:nth-child(2) { animation-duration: .82s; }
+    .visualizer i:nth-child(3) { animation-duration: 1.28s; }
+    .visualizer i:nth-child(4) { animation-duration: .94s; }
+    .visualizer i:nth-child(5) { animation-duration: 1.44s; }
+    .visualizer.stopped i, .visualizer.paused i { animation-play-state: paused; height: 18%; opacity: .5; }
+    @keyframes bounce { 0%, 100% { height: 22%; } 50% { height: 100%; } }
+    .progress { margin-top: 18px; }
+    .progress-bar { height: 6px; border-radius: 999px; background: rgba(255,255,255,.08); overflow: hidden; }
+    .progress-fill { height: 100%; width: 0%; border-radius: 999px; background: linear-gradient(90deg, var(--accent), var(--accent-2)); transition: width .6s linear; }
+    .progress-labels { display: flex; justify-content: space-between; margin-top: 7px; color: var(--muted); font-size: 10.5px; }
+    .transport { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; margin-top: 18px; }
+    .tbtn {
+      display: inline-grid; place-items: center; min-width: 44px; height: 40px; padding: 0 13px;
+      border: 1px solid var(--line); border-radius: 11px; background: rgba(255,255,255,.04);
+      color: var(--soft); font-size: 13px; font-weight: 660; transition: .16s ease;
+    }
+    .tbtn:hover { border-color: rgba(177,140,255,.4); background: rgba(177,140,255,.12); color: var(--text); }
+    .tbtn.primary { background: linear-gradient(140deg, #c3a4ff, #8d63e8); border-color: transparent; color: #170f24; }
+    .tbtn.danger:hover { border-color: rgba(251,113,133,.4); background: rgba(251,113,133,.13); color: #ffc3cd; }
+    .volume-row { display: flex; align-items: center; gap: 12px; margin-top: 16px; }
+    input[type="range"] { min-height: 0; padding: 0; border: 0; background: transparent; -webkit-appearance: none; appearance: none; height: 22px; }
+    input[type="range"]::-webkit-slider-runnable-track { height: 6px; border-radius: 999px; background: rgba(255,255,255,.1); }
+    input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 15px; height: 15px; margin-top: -5px; border-radius: 50%; background: linear-gradient(140deg, #d9c2ff, #8d63e8); border: 0; }
+    input[type="range"]::-moz-range-track { height: 6px; border-radius: 999px; background: rgba(255,255,255,.1); }
+    input[type="range"]::-moz-range-thumb { width: 15px; height: 15px; border: 0; border-radius: 50%; background: #b18cff; }
+    .volume-value { min-width: 46px; color: var(--soft); font-size: 12px; font-weight: 680; text-align: right; }
+
+    /* a mock of Discord's channel row, showing the voice channel status line */
+    .vc-mock { padding: 13px 14px; border: 1px solid var(--line); border-radius: 13px; background: #1b1a24; }
+    .vc-mock-title { color: var(--muted); font-size: 10px; font-weight: 750; letter-spacing: 1.3px; text-transform: uppercase; margin-bottom: 10px; }
+    .vc-row { display: flex; align-items: center; gap: 9px; padding: 7px 9px; border-radius: 8px; background: rgba(255,255,255,.03); }
+    .vc-name { color: #d7d2e2; font-size: 13px; font-weight: 620; }
+    .vc-status { margin: 6px 0 0 27px; color: var(--accent-2); font-size: 11.5px; overflow-wrap: anywhere; }
+    .vc-status.empty { color: #6f6880; }
+    .vc-listeners { margin: 8px 0 0 27px; display: grid; gap: 4px; }
+    .vc-listener { display: flex; align-items: center; gap: 7px; color: #b7b0c6; font-size: 11.5px; }
+    .vc-dot { width: 16px; height: 16px; border-radius: 50%; background: #3a3350; }
+
+    .queue { display: grid; gap: 7px; margin-top: 4px; }
+    .queue-row { display: flex; align-items: center; gap: 10px; padding: 9px 11px; border: 1px solid var(--line); border-radius: 10px; background: rgba(255,255,255,.02); font-size: 12px; }
+    .queue-row .qnum { color: var(--muted); font-size: 11px; min-width: 18px; }
+    .queue-row .qtitle { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    /* ---------------- forms ---------------- */
+    .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+    .field { min-width: 0; }
+    .field.full { grid-column: 1 / -1; }
+    .field label { display: flex; justify-content: space-between; gap: 10px; margin: 0 0 7px; }
+    .field .hint { margin: 6px 0 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
+    .form-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
+    .switch-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 11px 0; border-bottom: 1px solid var(--line); }
+    .switch-row:last-of-type { border-bottom: 0; }
+    .switch-text strong { display: block; font-size: 12.5px; font-weight: 660; }
+    .switch-text span { display: block; margin-top: 3px; color: var(--muted); font-size: 11px; line-height: 1.45; }
+    .switch { position: relative; flex: 0 0 44px; width: 44px; height: 25px; border-radius: 999px; border: 1px solid var(--line); background: rgba(255,255,255,.05); transition: .18s ease; }
+    .switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 19px; height: 19px; border-radius: 50%; background: #8b84a0; transition: .18s ease; }
+    .switch[aria-checked="true"] { background: rgba(177,140,255,.28); border-color: rgba(177,140,255,.5); }
+    .switch[aria-checked="true"]::after { left: 21px; background: linear-gradient(140deg, #d9c2ff, #8d63e8); }
+
+    /* ---------------- tables, tags, misc ---------------- */
+    .tag { display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border: 1px solid var(--line); border-radius: 999px; background: rgba(255,255,255,.03); color: var(--soft); font-size: 10.5px; white-space: nowrap; }
+    .tag.success { border-color: rgba(52,211,153,.24); background: rgba(52,211,153,.09); color: #86e6c1; }
+    .tag.warn { border-color: rgba(244,189,80,.24); background: rgba(244,189,80,.09); color: #f4ce79; }
+    .tag.bad { border-color: rgba(251,113,133,.24); background: rgba(251,113,133,.09); color: #ffb4c0; }
+    .tag.accent { border-color: rgba(177,140,255,.28); background: rgba(177,140,255,.1); color: #ddccff; }
+    .tag.muted { background: rgba(255,255,255,.025); color: var(--muted); }
+    .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--line); vertical-align: top; }
+    th { color: var(--muted); font-size: 10px; font-weight: 750; letter-spacing: 1.1px; text-transform: uppercase; background: rgba(255,255,255,.02); }
+    tbody tr:last-child td { border-bottom: 0; }
+    tbody tr:hover { background: rgba(177,140,255,.05); }
+    td.nowrap, th.nowrap { white-space: nowrap; }
+    .empty { padding: 30px 18px; color: var(--muted); text-align: center; font-size: 12px; line-height: 1.6; }
+    .empty strong { display: block; margin-bottom: 5px; color: var(--soft); font-size: 13px; }
+    .banner {
+      display: flex; gap: 11px; align-items: flex-start; margin-bottom: 16px; padding: 13px 15px;
+      border: 1px solid rgba(244,189,80,.22); border-radius: 12px; background: rgba(244,189,80,.06);
+      color: #e8d9a8; font-size: 11.5px; line-height: 1.55;
+    }
+    .banner.info { border-color: rgba(177,140,255,.22); background: rgba(177,140,255,.07); color: #ded0ff; }
+    .banner.bad { border-color: rgba(251,113,133,.24); background: rgba(251,113,133,.07); color: #ffc3cd; }
+    .banner strong { color: inherit; }
+    .banner ul { margin: 6px 0 0; padding-left: 17px; display: grid; gap: 5px; }
+
+    .station-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(255px, 1fr)); gap: 12px; }
+    .station-card { padding: 14px; border: 1px solid var(--line); border-radius: 14px; background: rgba(255,255,255,.025); display: grid; gap: 9px; }
+    .station-card.default { border-color: rgba(177,140,255,.4); background: rgba(177,140,255,.09); }
+    .station-head { display: flex; align-items: center; gap: 10px; }
+    .station-art { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 11px; background: rgba(177,140,255,.14); font-size: 17px; }
+    .station-name { font-size: 12.5px; font-weight: 700; }
+    .station-desc { color: var(--muted); font-size: 11px; line-height: 1.5; }
+    .station-actions { display: flex; flex-wrap: wrap; gap: 7px; }
+
+    .perm-list { display: grid; gap: 7px; }
+    .perm-row { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 11px; background: rgba(255,255,255,.02); }
+    .perm-mark { flex: 0 0 22px; height: 22px; display: grid; place-items: center; border-radius: 7px; font-size: 11px; font-weight: 800; }
+    .perm-mark.ok { background: rgba(52,211,153,.15); color: #86e6c1; }
+    .perm-mark.missing { background: rgba(251,113,133,.15); color: #ffb4c0; }
+    .perm-mark.optional { background: rgba(255,255,255,.06); color: var(--muted); }
+    .perm-mark.no-effect { background: rgba(244,189,80,.14); color: #f4ce79; }
+    .perm-text strong { display: block; font-size: 12px; }
+    .perm-text span { display: block; margin-top: 3px; color: var(--muted); font-size: 10.5px; line-height: 1.45; }
+
+    .feed { display: grid; gap: 7px; max-height: 340px; overflow-y: auto; }
+    .feed-row { display: flex; gap: 10px; padding: 9px 11px; border-radius: 10px; background: rgba(255,255,255,.02); font-size: 11.5px; }
+    .feed-kind { flex: 0 0 74px; color: var(--accent-2); font-weight: 700; font-size: 10px; text-transform: uppercase; letter-spacing: .6px; padding-top: 1px; }
+    .feed-body { min-width: 0; flex: 1; color: var(--soft); overflow-wrap: anywhere; }
+    .feed-time { flex: 0 0 auto; color: var(--muted); font-size: 10px; white-space: nowrap; }
+
+    .toast {
+      position: fixed; z-index: 10; right: 22px; bottom: 22px; max-width: min(430px, calc(100vw - 44px));
+      padding: 13px 16px; border: 1px solid rgba(52,211,153,.26); border-radius: 12px; background: #14231f;
+      color: #c9f7e5; box-shadow: 0 16px 50px rgba(0,0,0,.38); font-size: 12px; line-height: 1.5;
+      opacity: 0; transform: translateY(8px); pointer-events: none; transition: .22s ease;
+    }
+    .toast.error { border-color: rgba(251,113,133,.3); background: #2a1820; color: #ffd1d8; }
+    .toast.show { opacity: 1; transform: translateY(0); }
+    .loading { padding: 30px; color: var(--muted); text-align: center; font-size: 12px; }
+    .bot-avatar { width: 34px; height: 34px; border-radius: 12px; object-fit: cover; background: #2a2340; }
+    .kv { display: grid; grid-template-columns: minmax(110px, auto) minmax(0, 1fr); gap: 8px 14px; font-size: 12px; }
+    .kv dt { color: var(--muted); font-size: 11px; }
+    .kv dd { margin: 0; color: var(--soft); overflow-wrap: anywhere; }
+    .toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 15px; }
+    .toolbar-right { display: flex; flex-wrap: wrap; gap: 8px; }
+
+    @media (max-width: 1080px) {
+      .shell { grid-template-columns: 212px minmax(0, 1fr); }
+      .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .two-col { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 720px) {
+      .shell { display: block; }
+      .sidebar { position: static; height: auto; padding: 12px 14px 10px; border-right: 0; border-bottom: 1px solid var(--line); }
+      .brand { padding: 0 4px 12px; }
+      .side-label, .connection-card, .side-bottom { display: none; }
+      .nav { display: flex; overflow-x: auto; gap: 5px; }
+      .nav-btn { flex: 0 0 auto; width: auto; padding: 9px 11px; font-size: 11px; }
+      .main { padding: 19px 14px 40px; }
+      .topbar { flex-direction: column; }
+      .top-actions, .server-picker { width: 100%; max-width: none; }
+      .stats { gap: 9px; }
+      .stat-card { min-height: 104px; padding: 14px; }
+      .stat-value { font-size: 24px; }
+      .card, .now-playing { padding: 15px; }
+      .form-grid { grid-template-columns: 1fr; }
+      .field.full { grid-column: auto; }
+      .np-top { flex-direction: column; align-items: flex-start; }
+    }
+  </style>
+</head>
+<body>
+  <!-- ================= login ================= -->
+  <section id="login-view" class="login-wrap hidden">
+    <form id="login-form" class="login-card">
+      <div class="brand-mark">🎧</div>
+      <h1>Lofi</h1>
+      <p class="lede">Sign in with the local dashboard key to start stations, watch what is playing and configure every server the bot is in.</p>
+      <label for="dashboard-key">Dashboard key</label>
+      <input id="dashboard-key" type="password" autocomplete="current-password" placeholder="Paste your dashboard key" required>
+      <p id="login-error" class="login-error hidden" role="alert"></p>
+      <button class="btn wide" type="submit" style="margin-top:14px">Unlock console <span aria-hidden="true">→</span></button>
+      <div class="key-help">
+        <div class="key-help-title">Where the key is</div>
+        <ol>
+          <li>On the machine running the bot:
+            <span class="key-cmd"><code>python3 bot.py --dashboard-token</code></span>
+          </li>
+          <li>Or open <code>config.json</code> and copy <code>dashboard_token</code>. It is generated on first run.</li>
+          <li>No bot token yet? Preview the whole console with
+            <span class="key-cmd"><code>python3 bot.py --demo</code></span>
+          </li>
+        </ol>
+      </div>
+    </form>
+  </section>
+
+  <!-- ================= app ================= -->
+  <div id="app-view" class="shell hidden">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">🎧</div>
+        <div>
+          <div class="brand-title">Lofi</div>
+          <div class="brand-sub">Studio console</div>
+        </div>
+      </div>
+      <div class="side-label">Console</div>
+      <nav class="nav" id="nav"></nav>
+      <div class="side-spacer"></div>
+      <div class="connection-card">
+        <div class="connection-row"><span id="conn-pulse" class="pulse"></span><span id="conn-state">Connecting</span></div>
+        <p class="connection-sub" id="conn-sub">reading bot state…</p>
+      </div>
+      <div class="side-bottom">
+        <div style="min-width:0">
+          <div class="operator-name" id="bot-name">Lofi</div>
+          <div class="operator-desc" id="bot-desc">dashboard operator</div>
+        </div>
+        <button class="icon-btn" id="logout-btn" title="Sign out" aria-label="Sign out">⎋</button>
+      </div>
+    </aside>
+
+    <main class="main">
+      <div class="topbar">
+        <div>
+          <div class="eyebrow" id="page-eyebrow">Overview</div>
+          <h1 class="page-title" id="page-title">Studio overview</h1>
+          <p class="page-subtitle" id="page-subtitle">What is playing, where, and for how many people.</p>
+        </div>
+        <div class="top-actions">
+          <div class="server-picker">
+            <select id="guild-select" aria-label="Server"></select>
+          </div>
+          <button class="icon-btn" id="refresh-btn" title="Refresh" aria-label="Refresh">⟳</button>
+        </div>
+      </div>
+
+      <div id="demo-banner" class="banner info hidden">
+        <span aria-hidden="true">🧪</span>
+        <div>
+          <strong>Demo mode</strong> — these servers, listeners and history are simulated by
+          <code>bot.py --demo</code>. Nothing here is connected to Discord. The station list and
+          generated titles are real.
+        </div>
+      </div>
+      <div id="warning-banner" class="banner hidden"></div>
+
+      <!-- ---------- overview ---------- -->
+      <section class="page" data-page="overview">
+        <div class="grid stats" id="stat-cards"></div>
+        <div class="grid two-col">
+          <div class="card">
+            <div class="card-head">
+              <div>
+                <h2 class="card-title">Servers</h2>
+                <p class="card-desc">On air first. Select one to open its player.</p>
+              </div>
+              <span class="tag muted" id="guild-count">0</span>
+            </div>
+            <div class="guild-list" id="guild-list"></div>
+          </div>
+          <div class="grid">
+            <div class="card">
+              <div class="card-head"><div><h2 class="card-title">Quick actions</h2></div></div>
+              <div class="quick-actions" id="quick-actions"></div>
+            </div>
+            <div class="card">
+              <div class="card-head"><div><h2 class="card-title">Most played</h2><p class="card-desc">Last 14 days</p></div></div>
+              <div id="top-tracks"></div>
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-head">
+            <div><h2 class="card-title">Activity</h2><p class="card-desc">Connections, skips, stalls and settings changes</p></div>
+          </div>
+          <div class="feed" id="activity-feed"></div>
+        </div>
+      </section>
+
+      <!-- ---------- player ---------- -->
+      <section class="page" data-page="player">
+        <div class="grid two-col">
+          <div>
+            <div class="now-playing" id="now-playing"></div>
+            <div class="card">
+              <div class="card-head">
+                <div><h2 class="card-title">Queue</h2><p class="card-desc">Hand-queued items play before the station continues</p></div>
+                <div class="toolbar-right">
+                  <button class="btn secondary small" id="clear-queue-btn">Clear</button>
+                </div>
+              </div>
+              <div class="queue" id="queue-list"></div>
+            </div>
+            <div class="card">
+              <div class="card-head"><div><h2 class="card-title">Play a station here</h2><p class="card-desc">Same resolver the bot uses, including the search fallback</p></div></div>
+              <div class="form-grid">
+                <div class="field">
+                  <label for="play-station">Station</label>
+                  <select id="play-station"></select>
+                </div>
+                <div class="field">
+                  <label for="play-channel">Voice channel</label>
+                  <select id="play-channel"></select>
+                </div>
+              </div>
+              <div class="form-actions">
+                <button class="btn" id="play-go-btn">▶ Start playback</button>
+                <button class="btn secondary" id="announce-btn">Post now-playing card</button>
+              </div>
+            </div>
+          </div>
+          <div class="grid">
+            <div class="card">
+              <div class="card-head"><div><h2 class="card-title">Voice channel</h2><p class="card-desc">How the channel looks to listeners</p></div></div>
+              <div class="vc-mock" id="vc-mock"></div>
+            </div>
+            <div class="card">
+              <div class="card-head"><div><h2 class="card-title">Loop mode</h2></div></div>
+              <div class="field">
+                <select id="loop-mode">
+                  <option value="off">off — the station decides</option>
+                  <option value="station">station — restart the same broadcast</option>
+                  <option value="queue">queue — keep going through the queue</option>
+                </select>
+                <p class="hint">A live broadcast is always restarted rather than advanced: the next "track" of a 24/7 stream is the same stream.</p>
+              </div>
+            </div>
+            <div class="card">
+              <div class="card-head"><div><h2 class="card-title">Health</h2></div></div>
+              <dl class="kv" id="player-health"></dl>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ---------- servers ---------- -->
+      <section class="page" data-page="servers">
+        <div class="grid two-col">
+          <div class="card">
+            <div class="card-head">
+              <div><h2 class="card-title" id="settings-title">Server settings</h2><p class="card-desc">Saved to <code>config.json</code> and applied without a restart</p></div>
+            </div>
+            <div class="form-grid">
+              <div class="field">
+                <label for="set-station">Default station</label>
+                <select id="set-station"></select>
+                <p class="hint">Used by <code>/lofi play</code> with no argument, and by autostart.</p>
+              </div>
+              <div class="field">
+                <label for="set-voice">Voice channel</label>
+                <select id="set-voice"></select>
+                <p class="hint">Required for autostart.</p>
+              </div>
+              <div class="field">
+                <label for="set-text">Now-playing channel</label>
+                <select id="set-text"></select>
+                <p class="hint">Left empty, the bot picks a channel in the voice channel's category.</p>
+              </div>
+              <div class="field">
+                <label for="set-dj">DJ role</label>
+                <select id="set-dj"></select>
+                <p class="hint">Restricts transport controls to one role. Empty means "anyone in the same voice channel".</p>
+              </div>
+              <div class="field">
+                <label for="set-volume">Default volume <span class="tag muted" id="set-volume-tag">60%</span></label>
+                <input id="set-volume" type="range" min="0" max="150" step="5" value="60">
+              </div>
+              <div class="field">
+                <label for="set-idle">Idle leave (minutes)</label>
+                <input id="set-idle" type="number" min="0" max="1440" step="1" value="10">
+                <p class="hint">0 keeps the bot connected to an empty channel forever.</p>
+              </div>
+            </div>
+            <div style="margin-top:18px">
+              <div class="switch-row">
+                <div class="switch-text"><strong>Autostart on boot</strong><span>Join the voice channel and start the default station when the bot starts.</span></div>
+                <button class="switch" id="set-autostart" role="switch" aria-checked="false" aria-label="Autostart on boot"></button>
+              </div>
+              <div class="switch-row">
+                <div class="switch-text"><strong>24/7 mode</strong><span>Stay connected even when the channel is empty. Overrides idle leave.</span></div>
+                <button class="switch" id="set-always" role="switch" aria-checked="false" aria-label="24/7 mode"></button>
+              </div>
+              <div class="switch-row">
+                <div class="switch-text"><strong>Voice channel status line</strong><span>Show the current track under the channel name. Needs the <em>Set Voice Channel Status</em> permission.</span></div>
+                <button class="switch" id="set-status" role="switch" aria-checked="true" aria-label="Voice channel status line"></button>
+              </div>
+              <div class="switch-row">
+                <div class="switch-text"><strong>Post now-playing messages</strong><span>Send an embed when the station changes.</span></div>
+                <button class="switch" id="set-announce" role="switch" aria-checked="true" aria-label="Post now-playing messages"></button>
+              </div>
+            </div>
+            <div class="form-actions">
+              <button class="btn" id="save-settings-btn">Save settings</button>
+              <button class="btn secondary" id="sync-commands-btn">Sync slash commands</button>
+            </div>
+          </div>
+          <div class="grid">
+            <div class="card">
+              <div class="card-head"><div><h2 class="card-title">Voice permissions</h2><p class="card-desc">Checked live in this server</p></div></div>
+              <div class="perm-list" id="perm-list"></div>
+            </div>
+            <div class="card">
+              <div class="card-head"><div><h2 class="card-title">This server</h2></div></div>
+              <dl class="kv" id="guild-stats"></dl>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ---------- stations ---------- -->
+      <section class="page" data-page="stations">
+        <div class="card">
+          <div class="card-head">
+            <div><h2 class="card-title">Add a station</h2><p class="card-desc">A stream URL, a YouTube link, a folder (<code>library:/path</code>) or <code>generative</code></p></div>
+          </div>
+          <div class="form-grid">
+            <div class="field"><label for="new-name">Name</label><input id="new-name" placeholder="Late Night Jazz" maxlength="60"></div>
+            <div class="field"><label for="new-url">URL or source</label><input id="new-url" placeholder="https://ice2.somafm.com/groovesalad-128-mp3"></div>
+            <div class="field"><label for="new-art">Icon (emoji)</label><input id="new-art" placeholder="🎷" maxlength="8"></div>
+            <div class="field"><label for="new-desc">Description</label><input id="new-desc" placeholder="what it sounds like" maxlength="200"></div>
+          </div>
+          <div class="form-actions">
+            <button class="btn" id="add-station-btn">Save station</button>
+            <span class="subtle" id="station-hint">Private addresses (localhost, 10.x, 192.168.x) are refused.</span>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <div><h2 class="card-title">Stations</h2><p class="card-desc">Built-ins plus anything you add. "Test" resolves a station without playing it.</p></div>
+            <span class="tag muted" id="station-count">0</span>
+          </div>
+          <div class="station-grid" id="station-grid"></div>
+        </div>
+
+        <div class="grid two-col">
+          <div class="card">
+            <div class="card-head"><div><h2 class="card-title">Studio Lofi</h2><p class="card-desc">Beats rendered on the bot's machine — no network, nothing to license</p></div></div>
+            <div id="generative-panel"></div>
+          </div>
+          <div class="card">
+            <div class="card-head"><div><h2 class="card-title">Local library</h2><p class="card-desc">Audio files the bot plays from disk</p></div></div>
+            <div id="library-panel"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ---------- history ---------- -->
+      <section class="page" data-page="history">
+        <div class="grid stats" id="history-stats"></div>
+        <div class="card">
+          <div class="card-head">
+            <div><h2 class="card-title">Play sessions</h2><p class="card-desc">One row per stretch of listening, newest first</p></div>
+            <div class="toolbar-right">
+              <select id="history-scope" style="min-height:34px;font-size:12px">
+                <option value="">All servers</option>
+                <option value="guild">This server</option>
+              </select>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Server</th><th>Station</th><th>Track</th><th class="nowrap">Started</th><th class="nowrap">Length</th><th class="nowrap">Peak</th><th>Ended</th></tr></thead>
+              <tbody id="history-body"></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-head"><div><h2 class="card-title">Activity</h2></div></div>
+          <div class="feed" id="history-feed"></div>
+        </div>
+      </section>
+
+      <!-- ---------- commands ---------- -->
+      <section class="page" data-page="commands">
+        <div class="card">
+          <div class="card-head">
+            <div><h2 class="card-title">Slash commands</h2><p class="card-desc">Generated from the live command tree, so it cannot drift from the code</p></div>
+            <button class="btn secondary small" id="sync-commands-top">Sync commands</button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Command</th><th>What it does</th><th>Who can use it</th></tr></thead>
+              <tbody id="command-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ---------- settings ---------- -->
+      <section class="page" data-page="settings">
+        <div class="grid two-col">
+          <div class="card">
+            <div class="card-head">
+              <div><h2 class="card-title">Dashboard network</h2><p class="card-desc">Bound to loopback by default; the key you sign in with has bot-wide reach</p></div>
+            </div>
+            <div class="form-grid">
+              <div class="field"><label for="net-host">Bind host</label><input id="net-host" placeholder="127.0.0.1"><p class="hint">Use 0.0.0.0 only behind a firewall or a reverse proxy.</p></div>
+              <div class="field"><label for="net-port">Port</label><input id="net-port" type="number" min="1" max="65535" value="8790"></div>
+              <div class="field full"><label for="net-public">Public URL</label><input id="net-public" placeholder="https://lofi.example.com"><p class="hint">Needed when TLS is terminated in a reverse proxy, so cookies are marked secure.</p></div>
+              <div class="field full"><label for="net-hosts">Allowed Host headers</label><textarea id="net-hosts" placeholder="lofi.example.com&#10;yourname.duckdns.org"></textarea><p class="hint">One per line. Blocks DNS-rebinding. <code>*</code> allows any — local previews only.</p></div>
+              <div class="field full"><label for="net-proxies">Trusted proxies</label><textarea id="net-proxies" placeholder="127.0.0.1&#10;172.18.0.0/16"></textarea><p class="hint">Addresses whose X-Forwarded-For may be believed, so the login throttle works per attacker.</p></div>
+            </div>
+            <div style="margin-top:14px">
+              <div class="switch-row">
+                <div class="switch-text"><strong>Secure cookie</strong><span>Only send the session cookie over HTTPS. Forced on when TLS is served here.</span></div>
+                <button class="switch" id="net-secure" role="switch" aria-checked="false" aria-label="Secure cookie"></button>
+              </div>
+              <div class="switch-row">
+                <div class="switch-text"><strong>Dashboard enabled</strong><span>Turn off to serve no web UI at all.</span></div>
+                <button class="switch" id="net-enabled" role="switch" aria-checked="true" aria-label="Dashboard enabled"></button>
+              </div>
+            </div>
+            <div class="form-actions">
+              <button class="btn" id="save-net-btn">Save network settings</button>
+              <button class="btn secondary" id="rotate-key-btn">Rotate login key</button>
+            </div>
+          </div>
+          <div class="grid">
+            <div class="card">
+              <div class="card-head"><div><h2 class="card-title">Reachability</h2><p class="card-desc">What would break for a remote visitor, as fixes</p></div></div>
+              <div id="net-warnings"></div>
+              <dl class="kv" id="net-urls" style="margin-top:12px"></dl>
+            </div>
+            <div class="card">
+              <div class="card-head"><div><h2 class="card-title">This install</h2></div></div>
+              <dl class="kv" id="install-info"></dl>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <script>
+  "use strict";
+  /* ------------------------------------------------------------------ *
+   * State
+   * ------------------------------------------------------------------ */
+  const state = {
+    csrf: "",
+    demo: false,
+    page: "overview",
+    guildId: null,
+    overview: null,
+    detail: null,
+    player: null,
+    stations: [],
+    defaultStationId: "",
+    commands: null,
+    netSettings: null,
+    recipes: [],
+    pollHandle: null,
+    busy: false,
+  };
+
+  const PAGES = [
+    { id: "overview", icon: "◎", label: "Overview", title: "Studio overview", eyebrow: "Overview",
+      subtitle: "What is playing, where, and for how many people." },
+    { id: "player", icon: "▶", label: "Player", title: "Now playing", eyebrow: "Playback",
+      subtitle: "Transport controls, queue and the voice channel status line." },
+    { id: "servers", icon: "☰", label: "Servers", title: "Server settings", eyebrow: "Configuration",
+      subtitle: "Per-server defaults, autostart, DJ role and permissions." },
+    { id: "stations", icon: "♫", label: "Stations", title: "Stations", eyebrow: "Library",
+      subtitle: "Everything the bot can play: broadcasts, radio streams, local files and generated beats." },
+    { id: "history", icon: "◷", label: "History", title: "History", eyebrow: "Records",
+      subtitle: "Play sessions, listening time and the activity feed." },
+    { id: "commands", icon: "⌘", label: "Commands", title: "Slash commands", eyebrow: "Reference",
+      subtitle: "The live command tree and who is allowed to use each command." },
+    { id: "settings", icon: "⚙", label: "Settings", title: "Dashboard settings", eyebrow: "System",
+      subtitle: "Network binding, allowed hosts, TLS and the login key." },
+  ];
+
+  const $ = (id) => document.getElementById(id);
+  const esc = (value) => String(value === null || value === undefined ? "" : value)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+
+  function fmtClock(seconds) {
+    if (seconds === null || seconds === undefined || Number.isNaN(seconds)) return "—";
+    const total = Math.max(0, Math.floor(seconds));
+    const h = Math.floor(total / 3600), m = Math.floor((total % 3600) / 60), s = total % 60;
+    return h ? `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}` : `${m}:${String(s).padStart(2, "0")}`;
+  }
+  function fmtDuration(seconds) {
+    if (!seconds) return "—";
+    const total = Math.round(seconds);
+    if (total < 60) return `${total}s`;
+    if (total < 3600) return `${Math.round(total / 60)}m`;
+    return `${(total / 3600).toFixed(1)}h`;
+  }
+  function fmtAgo(stamp) {
+    if (!stamp) return "—";
+    const delta = Math.max(0, Date.now() / 1000 - stamp);
+    if (delta < 60) return "just now";
+    if (delta < 3600) return `${Math.floor(delta / 60)}m ago`;
+    if (delta < 86400) return `${Math.floor(delta / 3600)}h ago`;
+    return `${Math.floor(delta / 86400)}d ago`;
+  }
+  function fmtWhen(stamp) {
+    if (!stamp) return "—";
+    const date = new Date(stamp * 1000);
+    return date.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  }
+  function initials(name) {
+    return String(name || "?").split(/\s+/).slice(0, 2).map((part) => part[0] || "").join("").toUpperCase();
+  }
+  function toast(message, isError) {
+    const node = $("toast");
+    node.textContent = message;
+    node.classList.toggle("error", Boolean(isError));
+    node.classList.add("show");
+    clearTimeout(toast._handle);
+    toast._handle = setTimeout(() => node.classList.remove("show"), isError ? 6500 : 3200);
+  }
+
+  /* ------------------------------------------------------------------ *
+   * API
+   * ------------------------------------------------------------------ */
+  async function api(path, options = {}) {
+    const init = { method: options.method || "GET", headers: {}, credentials: "same-origin" };
+    if (state.csrf) init.headers["X-CSRF-Token"] = state.csrf;
+    if (options.body !== undefined) {
+      init.headers["Content-Type"] = "application/json";
+      init.body = JSON.stringify(options.body);
+    }
+    const response = await fetch(path, init);
+    let payload = null;
+    try { payload = await response.json(); } catch (err) { payload = null; }
+    if (!response.ok) {
+      const message = (payload && payload.error) || `Request failed (${response.status})`;
+      const error = new Error(message);
+      error.status = response.status;
+      throw error;
+    }
+    return payload;
+  }
+
+  async function action(guildId, name, data) {
+    if (state.busy) return null;
+    state.busy = true;
+    try {
+      const result = await api(`/api/guilds/${guildId}/player`, { method: "POST", body: { action: name, data: data || {} } });
+      if (result && result.message) toast(result.message, result.ok === false);
+      if (result && result.player) { state.player = result.player; renderPlayer(); }
+      return result;
+    } catch (error) {
+      toast(error.message, true);
+      return null;
+    } finally {
+      state.busy = false;
+      refreshSoon();
+    }
+  }
+
+  /* ------------------------------------------------------------------ *
+   * Navigation
+   * ------------------------------------------------------------------ */
+  function renderNav() {
+    const nav = $("nav");
+    nav.innerHTML = PAGES.map((page) => `
+      <button class="nav-btn ${state.page === page.id ? "active" : ""}" data-page="${page.id}">
+        <span class="nav-icon" aria-hidden="true">${page.icon}</span>${esc(page.label)}
+        ${page.id === "player" && state.player && state.player.playing ? '<span class="nav-badge">live</span>' : ""}
+      </button>`).join("");
+    nav.querySelectorAll(".nav-btn").forEach((button) => {
+      button.addEventListener("click", () => showPage(button.dataset.page));
+    });
+  }
+
+  function showPage(pageId) {
+    const page = PAGES.find((item) => item.id === pageId) || PAGES[0];
+    state.page = page.id;
+    document.querySelectorAll(".page").forEach((node) => node.classList.toggle("active", node.dataset.page === page.id));
+    $("page-eyebrow").textContent = page.eyebrow;
+    $("page-title").textContent = page.title;
+    $("page-subtitle").textContent = page.subtitle;
+    renderNav();
+    loadPage(page.id);
+  }
+
+  async function loadPage(pageId) {
+    try {
+      if (pageId === "overview") await loadOverview();
+      else if (pageId === "player" || pageId === "servers") await loadDetail();
+      else if (pageId === "stations") await loadStations();
+      else if (pageId === "history") await loadHistory();
+      else if (pageId === "commands") await loadCommands();
+      else if (pageId === "settings") await loadSettings();
+    } catch (error) {
+      if (error.status === 401) return showLogin();
+      toast(error.message, true);
+    }
+  }
+
+  function refreshSoon() {
+    clearTimeout(refreshSoon._handle);
+    refreshSoon._handle = setTimeout(() => loadPage(state.page), 450);
+  }
+
+  /* ------------------------------------------------------------------ *
+   * Overview
+   * ------------------------------------------------------------------ */
+  async function loadOverview() {
+    const data = await api("/api/overview");
+    state.overview = data;
+    state.demo = Boolean(data.demo);
+    $("demo-banner").classList.toggle("hidden", !state.demo);
+    renderBotBadge(data.bot);
+    renderStats(data.stats);
+    renderGuildList(data.guilds);
+    renderQuickActions();
+    renderTopTracks(data.stats.topTracks || []);
+    renderFeed($("activity-feed"), data.stats.recentEvents || []);
+    fillGuildSelect(data.guilds);
+  }
+
+  function renderBotBadge(bot) {
+    $("conn-state").textContent = bot.ready ? "Connected" : "Connecting";
+    $("conn-pulse").classList.toggle("off", !bot.ready);
+    $("conn-sub").textContent = `${bot.guildCount} server(s) · up ${fmtDuration(bot.uptimeSeconds)}${bot.voiceReady ? "" : " · voice not ready"}`;
+    $("bot-name").textContent = bot.name || "Lofi";
+    $("bot-desc").textContent = `v${bot.version || "?"} · ${state.demo ? "demo data" : "live"}`;
+  }
+
+  function renderStats(stats) {
+    const cards = [
+      { icon: "📡", label: "On air", value: `${stats.playing || 0}`, note: `${stats.connected || 0} connected · ${stats.guilds || 0} servers` },
+      { icon: "👥", label: "Listeners", value: `${stats.listeners || 0}`, note: `peak ${stats.peakListeners || 0} this session` },
+      { icon: "◷", label: "Minutes this week", value: Math.round(stats.listeningMinutes || 0).toLocaleString(), note: `${stats.sessions || 0} session(s) recorded` },
+      { icon: "♫", label: "Stations", value: `${stats.stations || 0}`, note: `${stats.libraryTracks || 0} local track(s)${stats.errors ? ` · ${stats.errors} with errors` : ""}` },
+    ];
+    $("stat-cards").innerHTML = cards.map((card) => `
+      <div class="stat-card">
+        <div class="stat-head"><span>${esc(card.label)}</span><span class="stat-icon" aria-hidden="true">${card.icon}</span></div>
+        <div class="stat-value">${esc(card.value)}</div>
+        <div class="stat-note">${esc(card.note)}</div>
+      </div>`).join("");
+  }
+
+  function renderGuildList(guilds) {
+    $("guild-count").textContent = `${guilds.length}`;
+    if (!guilds.length) {
+      $("guild-list").innerHTML = `<div class="empty"><strong>No servers yet</strong>
+        Invite the bot with the <em>bot</em> scope, then run <code>/lofi play</code> in one.</div>`;
+      return;
+    }
+    $("guild-list").innerHTML = guilds.map((guild) => {
+      const tag = guild.playing
+        ? `<span class="tag success">on air</span>`
+        : guild.paused ? `<span class="tag warn">paused</span>`
+        : guild.connected ? `<span class="tag">connected</span>` : `<span class="tag muted">idle</span>`;
+      return `<button class="guild-row ${String(state.guildId) === String(guild.id) ? "selected" : ""}" data-guild="${esc(guild.id)}">
+        <span class="guild-avatar">${guild.icon ? `<img src="${esc(guild.icon)}" alt="">` : esc(initials(guild.name))}</span>
+        <span class="guild-info">
+          <span class="guild-name">${esc(guild.name)}</span>
+          <span class="guild-meta">${esc(guild.track || guild.station || "nothing playing")}${guild.listeners ? ` · ${guild.listeners} listening` : ""}</span>
+        </span>
+        <span class="guild-count">${tag}</span>
+      </button>`;
+    }).join("");
+    $("guild-list").querySelectorAll(".guild-row").forEach((row) => {
+      row.addEventListener("click", () => selectGuild(row.dataset.guild));
+    });
+  }
+
+  function renderQuickActions() {
+    const guild = state.guildId;
+    const playing = state.player && state.player.playing;
+    const actions = [
+      { icon: "▶", label: playing ? "Pause playback" : "Start the default station", action: playing ? "pause" : "play", guild },
+      { icon: "⏭", label: "Skip to the next track", action: "skip", guild },
+      { icon: "■", label: "Stop and leave the channel", action: "stop", guild },
+      { icon: "⟳", label: "Sync slash commands", action: "sync", guild: null },
+    ];
+    $("quick-actions").innerHTML = actions.map((item, index) => `
+      <button class="quick-action" data-index="${index}">
+        <span class="qicon" aria-hidden="true">${item.icon}</span>
+        <span><strong>${esc(item.label)}</strong><small>${item.guild ? "in the selected server" : "bot-wide"}</small></span>
+      </button>`).join("");
+    $("quick-actions").querySelectorAll(".quick-action").forEach((button) => {
+      const item = actions[Number(button.dataset.index)];
+      button.addEventListener("click", async () => {
+        if (item.action === "sync") {
+          try { const result = await api("/api/sync", { method: "POST", body: {} }); toast(result.message || "Synced"); }
+          catch (error) { toast(error.message, true); }
+          return;
+        }
+        if (!item.guild) return toast("Select a server first.", true);
+        await action(item.guild, item.action, {});
+        loadOverview().catch(() => {});
+      });
+    });
+  }
+
+  function renderTopTracks(tracks) {
+    if (!tracks.length) {
+      $("top-tracks").innerHTML = `<div class="empty"><strong>Nothing played yet</strong>Track counts appear here after the first session.</div>`;
+      return;
+    }
+    $("top-tracks").innerHTML = tracks.map((track, index) => `
+      <div class="queue-row">
+        <span class="qnum">${index + 1}</span>
+        <span class="qtitle">${esc(track.title)}</span>
+        <span class="tag muted">${esc(track.plays)}× · peak ${esc(track.peak_listeners || 0)}</span>
+      </div>`).join("");
+  }
+
+  function renderFeed(node, events) {
+    if (!events.length) {
+      node.innerHTML = `<div class="empty"><strong>No activity yet</strong>Connections, skips and settings changes land here.</div>`;
+      return;
+    }
+    node.innerHTML = events.map((event) => `
+      <div class="feed-row">
+        <span class="feed-kind">${esc(event.kind)}</span>
+        <span class="feed-body">${esc(event.detail || "")}${event.guildName ? ` <span class="subtle">· ${esc(event.guildName)}</span>` : ""}</span>
+        <span class="feed-time">${esc(fmtAgo(event.createdAt))}</span>
+      </div>`).join("");
+  }
+
+  function fillGuildSelect(guilds) {
+    const select = $("guild-select");
+    const options = guilds.map((guild) =>
+      `<option value="${esc(guild.id)}">${esc(guild.name)}${guild.playing ? " · on air" : ""}</option>`).join("");
+    select.innerHTML = options || `<option value="">No servers</option>`;
+    if (!state.guildId && guilds.length) state.guildId = guilds[0].id;
+    if (state.guildId) select.value = String(state.guildId);
+  }
+
+  async function selectGuild(guildId) {
+    state.guildId = guildId;
+    $("guild-select").value = String(guildId);
+    document.querySelectorAll(".guild-row").forEach((row) => row.classList.toggle("selected", row.dataset.guild === String(guildId)));
+    await loadDetail();
+  }
+
+  /* ------------------------------------------------------------------ *
+   * Player
+   * ------------------------------------------------------------------ */
+  async function loadDetail() {
+    if (!state.guildId) { await loadOverview(); return; }
+    const [detail, stationsData] = await Promise.all([
+      api(`/api/guilds/${state.guildId}`),
+      state.stations.length ? Promise.resolve(null) : api("/api/stations"),
+    ]);
+    if (stationsData) { state.stations = stationsData.stations || []; state.defaultStationId = stationsData.defaultStationId || ""; }
+    state.detail = detail;
+    state.player = detail.player || {};
+    state.demo = Boolean(detail.demo);
+    $("demo-banner").classList.toggle("hidden", !state.demo);
+    renderPlayer();
+    renderServerSettings(detail);
+    renderNav();
+  }
+
+  function renderPlayer() {
+    const player = state.player || {};
+    const track = player.track || null;
+    const station = player.station || null;
+    const stopped = !player.connected || !track;
+    const visualClass = stopped ? "stopped" : (player.paused ? "paused" : "");
+
+    $("now-playing").innerHTML = `
+      <div class="np-top">
+        <div class="vinyl ${visualClass}"><span class="label" aria-hidden="true">${esc((track && track.art) || (station && station.art) || "🎧")}</span></div>
+        <div class="np-main">
+          <div class="np-station">${esc(station ? station.name : "Nothing playing")}</div>
+          <h2 class="np-title">${esc(track ? track.title : "Silence")}</h2>
+          <div class="np-meta">
+            <span>${player.playing ? "🔊 playing" : player.paused ? "⏸ paused" : "○ not connected"}</span>
+            <span>👥 ${esc(player.listeners || 0)}</span>
+            <span>📍 ${esc(player.channelName || "—")}</span>
+            ${track && track.uploader ? `<span>· ${esc(track.uploader)}</span>` : ""}
+          </div>
+        </div>
+        <div class="visualizer ${visualClass}" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
+      </div>
+      <div class="progress">
+        <div class="progress-bar"><div class="progress-fill" style="width:${stopped ? 0 : Math.round((player.progress || 0) * 100)}%"></div></div>
+        <div class="progress-labels">
+          <span>${stopped ? "—" : fmtClock(player.elapsed)}</span>
+          <span>${track && track.isLive ? "live broadcast" : (track && track.duration ? fmtClock(track.duration) : "unknown length")}</span>
+        </div>
+      </div>
+      <div class="transport">
+        <button class="tbtn primary" data-act="${player.paused ? "resume" : "pause"}">${player.paused ? "▶ Resume" : "⏸ Pause"}</button>
+        <button class="tbtn" data-act="skip">⏭ Skip</button>
+        <button class="tbtn danger" data-act="stop">■ Stop</button>
+        ${stopped ? `<button class="tbtn" data-act="play">▶ Start ${esc(station ? station.name : "station")}</button>` : ""}
+      </div>
+      <div class="volume-row">
+        <span class="subtle">Volume</span>
+        <input id="np-volume" type="range" min="0" max="150" step="5" value="${esc(player.volume || 60)}" aria-label="Volume">
+        <span class="volume-value" id="np-volume-value">${esc(player.volume || 60)}%</span>
+      </div>
+      ${player.lastError ? `<div class="banner bad" style="margin:16px 0 0"><span aria-hidden="true">⚠</span><div><strong>Last problem</strong>${esc(player.lastError)}</div></div>` : ""}
+    `;
+    $("now-playing").querySelectorAll("[data-act]").forEach((button) => {
+      button.addEventListener("click", () => action(state.guildId, button.dataset.act, {}));
+    });
+    const slider = $("np-volume");
+    if (slider) {
+      slider.addEventListener("input", () => { $("np-volume-value").textContent = `${slider.value}%`; });
+      slider.addEventListener("change", () => action(state.guildId, "volume", { percent: Number(slider.value) }));
+    }
+
+    // Queue
+    const queue = player.queue || [];
+    $("queue-list").innerHTML = queue.length
+      ? queue.map((item, index) => `<div class="queue-row"><span class="qnum">${index + 1}</span>
+          <span class="qtitle">${esc(item.title || item.stationName || "queued item")}</span>
+          <span class="tag muted">${esc(item.kind || "")}</span></div>`).join("")
+      : `<div class="empty"><strong>Queue is empty</strong>${
+          station && (station.kind === "youtube" || station.kind === "stream")
+            ? "This station is a continuous broadcast, so it keeps itself going."
+            : "The station will keep playing its next tracks."}</div>`;
+
+    // Voice channel mock, including the status line
+    $("vc-mock").innerHTML = `
+      <div class="vc-mock-title">Voice channel status</div>
+      <div class="vc-row"><span aria-hidden="true">🔊</span><span class="vc-name">${esc(player.channelName || "not connected")}</span>
+        ${player.connected ? `<span class="tag success" style="margin-left:auto">${esc(player.listeners || 0)} listening</span>` : `<span class="tag muted" style="margin-left:auto">offline</span>`}</div>
+      <p class="vc-status ${player.statusText ? "" : "empty"}">${esc(player.statusText || (player.connected ? "no status set" : "—"))}</p>
+      <div class="vc-listeners">
+        ${player.connected ? `<span class="vc-listener"><span class="vc-dot"></span>${esc(player.listeners || 0)} member(s) hearing this</span>` : ""}
+        <span class="vc-listener subtle">${player.statusSupported === false
+          ? "Status line unavailable: the bot lacks Set Voice Channel Status."
+          : (detailSetting("channelStatus") === false ? "Status line is turned off for this server." : "Written with Set Voice Channel Status.")}</span>
+      </div>`;
+
+    // Play-a-station form, including the generated moods (which are a
+    // parameter of one station rather than five registry entries).
+    const stationSelect = $("play-station");
+    stationSelect.innerHTML = stationOptions(station ? station.id : null);
+    const channelSelect = $("play-channel");
+    const channels = (state.detail && state.detail.voiceChannels) || [];
+    channelSelect.innerHTML = channels.length
+      ? channels.map((channel) => `<option value="${esc(channel.id)}">${esc(channel.name)}${channel.category ? ` · ${esc(channel.category)}` : ""}</option>`).join("")
+      : `<option value="">no voice channels</option>`;
+    if (player.channelId) channelSelect.value = String(player.channelId);
+
+    const loopSelect = $("loop-mode");
+    loopSelect.value = player.loopMode || "off";
+
+    $("player-health").innerHTML = `
+      <dt>Session</dt><dd>${player.startedAt ? `running ${fmtDuration(Date.now() / 1000 - player.startedAt)}` : "not started"}</dd>
+      <dt>Loop mode</dt><dd>${esc(player.loopMode || "off")}</dd>
+      <dt>Retries</dt><dd>${esc(player.restartAttempts || 0)} of 6 before giving up</dd>
+      <dt>Peak listeners</dt><dd>${esc(player.peakListeners || 0)}</dd>
+      <dt>Bitrate</dt><dd>${player.bitrateKbps ? `${esc(player.bitrateKbps)} kbps decoded` : "—"}</dd>
+      <dt>Requested by</dt><dd>${track && track.requestedBy ? `<span class="mono">${esc(track.requestedBy)}</span>` : "autostart / dashboard"}</dd>`;
+  }
+
+  function stationOptions(selectedId) {
+    // The generated moods are a parameter of one station rather than five
+    // registry entries, so they are offered as their own optgroup.
+    const selected = String(selectedId || "");
+    const option = (value, label) =>
+      `<option value="${esc(value)}"${value === selected ? " selected" : ""}>${esc(label)}</option>`;
+    const registry = (state.stations || []).map((item) => option(item.id, `${item.art} ${item.name}`)).join("");
+    const moods = (state.recipes || []).map((recipe) => option(`studio-${recipe.id}`, `🎹 Studio · ${recipe.name}`)).join("");
+    return registry + (moods ? `<optgroup label="Studio Lofi (rendered here)">${moods}</optgroup>` : "");
+  }
+
+  function detailSetting(key) {
+    const settings = (state.detail && state.detail.settings) || {};
+    const camel = key.replace(/^[a-z]/, (c) => c.toUpperCase());
+    return settings[camel];
+  }
+
+  /* ------------------------------------------------------------------ *
+   * Server settings
+   * ------------------------------------------------------------------ */
+  function renderServerSettings(detail) {
+    const guild = detail.guild || {};
+    const settings = detail.settings || {};
+    $("settings-title").textContent = `${guild.name || "Server"} settings`;
+
+    const stationSelect = $("set-station");
+    stationSelect.innerHTML = (state.stations || []).map((item) =>
+      `<option value="${esc(item.id)}">${esc(item.art)} ${esc(item.name)}</option>`).join("");
+    stationSelect.value = settings.stationId || state.defaultStationId || "";
+    // The default-station list stays registry-only: a mood is a nice thing to
+    // play now, but a server's *default* should be a station that survives a
+    // restart of the bot rather than a synthesised reference.
+
+    const voiceSelect = $("set-voice");
+    voiceSelect.innerHTML = `<option value="">— not set —</option>` + (detail.voiceChannels || []).map((channel) =>
+      `<option value="${esc(channel.id)}">${esc(channel.name)}${channel.category ? ` · ${esc(channel.category)}` : ""}</option>`).join("");
+    voiceSelect.value = settings.voiceChannelId || "";
+
+    const textSelect = $("set-text");
+    textSelect.innerHTML = `<option value="">— pick automatically —</option>` + (detail.textChannels || []).map((channel) =>
+      `<option value="${esc(channel.id)}">#${esc(channel.name)}${channel.category ? ` · ${esc(channel.category)}` : ""}</option>`).join("");
+    textSelect.value = settings.textChannelId || "";
+
+    const djSelect = $("set-dj");
+    djSelect.innerHTML = `<option value="">— anyone in the channel —</option>` + (detail.roles || []).map((role) =>
+      `<option value="${esc(role.id)}">@${esc(role.name)}</option>`).join("");
+    djSelect.value = settings.djRoleId || "";
+
+    $("set-volume").value = settings.volume ?? 60;
+    $("set-volume-tag").textContent = `${settings.volume ?? 60}%`;
+    $("set-idle").value = settings.idleMinutes ?? 10;
+    setSwitch("set-autostart", Boolean(settings.autostart));
+    setSwitch("set-always", Boolean(settings.alwaysOn));
+    setSwitch("set-status", settings.channelStatus !== false);
+    setSwitch("set-announce", settings.announce !== false);
+
+    const marks = { ok: "✓", missing: "✗", optional: "○", "no-effect": "–" };
+    $("perm-list").innerHTML = (detail.permissions || []).map((row) => `
+      <div class="perm-row">
+        <span class="perm-mark ${esc(row.state)}">${marks[row.state] || "?"}</span>
+        <span class="perm-text"><strong>${esc(row.label)}${row.required ? "" : ' <span class="tag muted">optional</span>'}</strong>
+        <span>${esc(row.reason)}</span></span>
+        <span class="tag ${row.state === "ok" ? "success" : row.state === "missing" ? "bad" : row.state === "no-effect" ? "warn" : "muted"}" style="margin-left:auto">${esc(row.state)}</span>
+      </div>`).join("");
+
+    const stats = detail.stats || {};
+    $("guild-stats").innerHTML = `
+      <dt>Members</dt><dd>${esc((guild.memberCount || 0).toLocaleString())}</dd>
+      <dt>Server id</dt><dd class="mono">${esc(guild.id || "")}</dd>
+      <dt>Owner id</dt><dd class="mono">${esc(guild.ownerId || "")}</dd>
+      <dt>Sessions</dt><dd>${esc(stats.sessions || 0)}</dd>
+      <dt>Minutes / week</dt><dd>${Math.round(stats.listeningMinutes || 0).toLocaleString()}</dd>
+      <dt>On air</dt><dd>${(state.player && state.player.playing) ? "yes" : "no"}</dd>`;
+  }
+
+  function setSwitch(id, checked) {
+    const node = $(id);
+    node.setAttribute("aria-checked", checked ? "true" : "false");
+  }
+  function readSwitch(id) {
+    return $(id).getAttribute("aria-checked") === "true";
+  }
+
+  async function saveSettings() {
+    const payload = {
+      stationId: $("set-station").value || null,
+      voiceChannelId: $("set-voice").value || null,
+      textChannelId: $("set-text").value || null,
+      djRoleId: $("set-dj").value || null,
+      volume: Number($("set-volume").value),
+      idleMinutes: Number($("set-idle").value),
+      autostart: readSwitch("set-autostart"),
+      alwaysOn: readSwitch("set-always"),
+      channelStatus: readSwitch("set-status"),
+      announce: readSwitch("set-announce"),
+    };
+    try {
+      const result = await api(`/api/guilds/${state.guildId}/settings`, { method: "POST", body: payload });
+      toast(result.message || "Saved");
+      if (result.settings && state.detail) {
+        state.detail.settings = result.settings;
+        state.player = result.player || state.player;
+        renderServerSettings(state.detail);
+        renderPlayer();
+      }
+    } catch (error) { toast(error.message, true); }
+  }
+
+  /* ------------------------------------------------------------------ *
+   * Stations
+   * ------------------------------------------------------------------ */
+  async function loadStations() {
+    const [data, generativeData] = await Promise.all([api("/api/stations"), api("/api/generative")]);
+    state.stations = data.stations || [];
+    state.defaultStationId = data.defaultStationId || "";
+    $("station-count").textContent = `${state.stations.length}`;
+    $("station-grid").innerHTML = state.stations.map((station) => {
+      const isDefault = station.id === state.defaultStationId;
+      const kindLabel = { youtube: "YouTube", stream: "Internet radio", library: "Local files", generative: "Rendered here" }[station.kind] || station.kind;
+      return `<div class="station-card ${isDefault ? "default" : ""}">
+        <div class="station-head">
+          <span class="station-art" aria-hidden="true">${esc(station.art || "🎧")}</span>
+          <span style="min-width:0"><span class="station-name">${esc(station.name)}</span>
+            <span class="subtle" style="display:block;margin-top:3px">${esc(station.id)}</span></span>
+          ${isDefault ? '<span class="tag accent" style="margin-left:auto">default</span>' : ""}
+        </div>
+        <div class="station-desc">${esc(station.description || "—")}</div>
+        <div style="display:flex;flex-wrap:wrap;gap:5px">
+          <span class="tag muted">${esc(kindLabel)}</span>
+          ${station.builtin ? '<span class="tag muted">built-in</span>' : '<span class="tag">custom</span>'}
+          ${(station.tags || []).map((tag) => `<span class="tag muted">${esc(tag)}</span>`).join("")}
+        </div>
+        <div class="station-actions">
+          <button class="btn secondary small" data-station="${esc(station.id)}" data-do="play">▶ Play in selected server</button>
+          <button class="btn secondary small" data-station="${esc(station.id)}" data-do="test">Test</button>
+          <button class="btn secondary small" data-station="${esc(station.id)}" data-do="default">Make default</button>
+          <button class="btn danger small" data-station="${esc(station.id)}" data-do="remove">Remove</button>
+        </div>
+      </div>`;
+    }).join("");
+    $("station-grid").querySelectorAll("[data-do]").forEach((button) => {
+      button.addEventListener("click", () => stationAction(button.dataset.do, button.dataset.station, button));
+    });
+
+    $("generative-panel").innerHTML = generativeData.available ? `
+      <p class="card-desc" style="margin-top:0">Available. Each recipe is a tempo, a key, a chord progression and a mix of filters; tracks are rendered in a few seconds and cached.</p>
+      <div class="queue">
+        ${generativeData.recipes.map((recipe) => `<div class="queue-row">
+          <span class="qtitle"><strong>${esc(recipe.name)}</strong> <span class="subtle">· ${esc(recipe.bpm)} BPM · ${esc(recipe.progression)}</span></span>
+          <span class="tag muted">${esc(recipe.id)}</span></div>`).join("")}
+      </div>
+      <p class="subtle" style="margin-top:10px">Cache: <code>${esc(generativeData.cacheDir)}</code> · ${generativeData.cached.length} rendered track(s) kept</p>`
+      : `<div class="banner"><span aria-hidden="true">⚠</span><div><strong>Studio Lofi is unavailable</strong>${esc(generativeData.reason || "numpy is not installed.")}</div></div>`;
+
+    const library = data.library || {};
+    // A fresh install has the folder but no audio in it: say so, because
+    // "Tracks: 0" on its own reads like a bug in the scanner.
+    const libraryHint = library.exists && !library.count ? `
+      <div class="banner" style="margin-top:10px"><span aria-hidden="true">♪</span><div>
+        <strong>The folder is there but empty.</strong>
+        Drop in ${esc((library.extensions || []).slice(0, 6).join(", "))} files and they will be
+        shuffled — or play <em>Studio Lofi</em>, which needs no files at all.
+      </div></div>` : "";
+    $("library-panel").innerHTML = library.exists ? `
+      <dl class="kv">
+        <dt>Folder</dt><dd class="mono">${esc(library.path)}</dd>
+        <dt>Tracks</dt><dd>${esc(library.count)}</dd>
+        <dt>Size</dt><dd>${(library.totalBytes / 1048576).toFixed(1)} MB</dd>
+      </dl>
+      ${library.files && library.files.length ? `<div class="queue" style="margin-top:10px">${library.files.slice(0, 12).map((file) =>
+        `<div class="queue-row"><span class="qtitle">${esc(file.title)}</span></div>`).join("")}</div>` : ""}
+      ${library.truncated ? '<p class="subtle" style="margin-top:8px">Only the first 60 files are listed here.</p>' : ""}
+      ${libraryHint}`
+      : `<div class="empty"><strong>No music folder</strong>
+         Create <code>music/</code> next to <code>bot.py</code> (expected: <code>${esc(library.expectedPath || "")}</code>)
+         and drop audio files in it — ${esc((library.extensions || []).slice(0, 6).join(", "))}.</div>`;
+  }
+
+  async function stationAction(kind, stationId, button) {
+    button.disabled = true;
+    try {
+      if (kind === "play") {
+        if (!state.guildId) { toast("Select a server first.", true); return; }
+        await action(state.guildId, "play", { station: stationId });
+      } else if (kind === "test") {
+        const result = await api(`/api/stations/${encodeURIComponent(stationId)}/test`, { method: "POST", body: {} });
+        toast(`${result.message} · ${result.track.title}${result.track.isLive ? " (live)" : ""}`);
+      } else if (kind === "default") {
+        const result = await api(`/api/stations/${encodeURIComponent(stationId)}/default`, { method: "POST", body: {} });
+        toast(result.message);
+        await loadStations();
+      } else if (kind === "remove") {
+        if (!confirm(`Remove the station "${stationId}"?`)) return;
+        const result = await api(`/api/stations/${encodeURIComponent(stationId)}`, { method: "DELETE" });
+        toast(result.message);
+        await loadStations();
+      }
+    } catch (error) {
+      toast(error.message, true);
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  async function addStation() {
+    const payload = {
+      name: $("new-name").value.trim(),
+      url: $("new-url").value.trim(),
+      art: $("new-art").value.trim(),
+      description: $("new-desc").value.trim(),
+    };
+    if (!payload.name || !payload.url) { toast("A station needs a name and a URL.", true); return; }
+    try {
+      const result = await api("/api/stations", { method: "POST", body: payload });
+      toast(result.message || "Saved");
+      $("new-name").value = ""; $("new-url").value = ""; $("new-art").value = ""; $("new-desc").value = "";
+      await loadStations();
+    } catch (error) { toast(error.message, true); }
+  }
+
+  /* ------------------------------------------------------------------ *
+   * History
+   * ------------------------------------------------------------------ */
+  async function loadHistory() {
+    const scope = $("history-scope").value;
+    const path = scope === "guild" && state.guildId
+      ? `/api/guilds/${state.guildId}/history?limit=80`
+      : `/api/history?limit=80`;
+    const data = await api(path);
+    const sessions = data.sessions || [];
+    $("history-stats").innerHTML = [
+      { icon: "◷", label: "Sessions", value: `${sessions.length}`, note: scope === "guild" ? "in this server" : "across every server" },
+      { icon: "⏱", label: "Minutes (7 days)", value: Math.round(data.listeningMinutes || 0).toLocaleString(), note: "audio actually served" },
+      { icon: "👥", label: "Peak listeners", value: `${Math.max(0, ...sessions.map((row) => row.peakListeners || 0))}`, note: "in the rows shown" },
+      { icon: "♫", label: "Tracks logged", value: `${(data.topTracks || []).reduce((total, row) => total + (row.plays || 0), 0)}`, note: "in the last 14 days" },
+    ].map((card) => `
+      <div class="stat-card">
+        <div class="stat-head"><span>${esc(card.label)}</span><span class="stat-icon" aria-hidden="true">${card.icon}</span></div>
+        <div class="stat-value">${esc(card.value)}</div>
+        <div class="stat-note">${esc(card.note)}</div>
+      </div>`).join("");
+
+    $("history-body").innerHTML = sessions.length ? sessions.map((row) => `
+      <tr>
+        <td>${esc(row.guildName || row.guildId)}</td>
+        <td>${esc(row.stationName || row.stationId || "—")}</td>
+        <td>${esc(row.trackTitle || "—")}</td>
+        <td class="nowrap">${esc(fmtWhen(row.startedAt))}</td>
+        <td class="nowrap">${row.running ? '<span class="tag success">running</span>' : esc(fmtDuration(row.secondsPlayed))}</td>
+        <td class="nowrap">${esc(row.peakListeners || 0)}</td>
+        <td class="subtle">${esc(row.endedReason || (row.running ? "still playing" : ""))}</td>
+      </tr>`).join("")
+      : `<tr><td colspan="7"><div class="empty"><strong>No sessions recorded</strong>Play something and it will show up here.</div></td></tr>`;
+
+    renderFeed($("history-feed"), data.events || []);
+  }
+
+  /* ------------------------------------------------------------------ *
+   * Commands
+   * ------------------------------------------------------------------ */
+  async function loadCommands() {
+    if (!state.commands) state.commands = await api("/api/commands");
+    const tiers = state.commands.tiers || {};
+    $("command-body").innerHTML = (state.commands.commands || []).map((command) => `
+      <tr>
+        <td class="nowrap mono">${esc(command.signature)}</td>
+        <td>${esc(command.description)}</td>
+        <td><span class="tag ${command.tier === "configuration" ? "warn" : command.tier === "transport" ? "accent" : "muted"}">${esc(command.tier)}</span>
+          <span class="subtle" style="display:block;margin-top:4px">${esc(tiers[command.tier] || "")}</span></td>
+      </tr>`).join("");
+  }
+
+  /* ------------------------------------------------------------------ *
+   * Dashboard settings
+   * ------------------------------------------------------------------ */
+  async function loadSettings() {
+    const data = await api("/api/settings");
+    state.netSettings = data;
+    $("net-host").value = data.host || "127.0.0.1";
+    $("net-port").value = data.port || 8790;
+    $("net-public").value = data.publicUrl || "";
+    $("net-hosts").value = (data.allowedHosts || []).join("\n") + (data.allowAnyHost ? "\n*" : "");
+    $("net-proxies").value = (data.trustedProxies || []).join("\n");
+    setSwitch("net-secure", Boolean(data.secureCookie));
+    setSwitch("net-enabled", data.enabled !== false);
+
+    $("net-warnings").innerHTML = (data.warnings || []).length
+      ? `<div class="banner"><span aria-hidden="true">⚠</span><div><strong>Remote access</strong><ul>${
+          data.warnings.map((warning) => `<li>${esc(warning)}</li>`).join("")}</ul></div></div>`
+      : `<div class="banner info"><span aria-hidden="true">✓</span><div>No problems detected for the current binding.</div></div>`;
+
+    $("net-urls").innerHTML = (data.urls || []).map((url) =>
+      `<dt>URL</dt><dd class="mono">${esc(url)}</dd>`).join("") +
+      `<dt>TLS</dt><dd>${data.tls ? "served here" : "not served here"}</dd>
+       <dt>Login key</dt><dd>${data.tokenLength ? `${data.tokenLength} characters stored` : "not generated"}</dd>`;
+
+    $("install-info").innerHTML = `
+      <dt>Version</dt><dd>${esc(data.version || "?")}</dd>
+      <dt>Config</dt><dd class="mono">${esc(data.configPath || "")}</dd>
+      <dt>Data dir</dt><dd class="mono">${esc(data.dataDir || "")}</dd>
+      <dt>Database</dt><dd class="mono">${esc(data.dbPath || "")}</dd>
+      <dt>ffmpeg</dt><dd class="mono">${esc(data.ffmpeg || "MISSING")}</dd>
+      <dt>libopus</dt><dd class="mono">${esc(data.opus || "MISSING")}</dd>`;
+  }
+
+  async function saveNetworkSettings(regenerate) {
+    const lines = (value) => String(value || "").split("\n").map((line) => line.trim()).filter(Boolean);
+    const payload = {
+      host: $("net-host").value.trim(),
+      port: Number($("net-port").value),
+      publicUrl: $("net-public").value.trim(),
+      allowedHosts: lines($("net-hosts").value),
+      trustedProxies: lines($("net-proxies").value),
+      secureCookie: readSwitch("net-secure"),
+      enabled: readSwitch("net-enabled"),
+    };
+    if (regenerate) payload.regenerateToken = true;
+    try {
+      const result = await api("/api/settings", { method: "POST", body: payload });
+      toast(result.message || "Saved");
+      if (result.token) {
+        const box = document.createElement("div");
+        box.className = "banner info";
+        box.innerHTML = `<span aria-hidden="true">🔑</span><div><strong>New login key</strong>
+          <code class="mono" style="display:block;margin-top:6px;overflow-wrap:anywhere">${esc(result.token)}</code>
+          Copy it now — it is not shown again. Existing sessions were signed out.</div>`;
+        $("net-warnings").prepend(box);
+      }
+      await loadSettings();
+    } catch (error) { toast(error.message, true); }
+  }
+
+  /* ------------------------------------------------------------------ *
+   * Boot
+   * ------------------------------------------------------------------ */
+  function showLogin(message) {
+    $("app-view").classList.add("hidden");
+    $("login-view").classList.remove("hidden");
+    const error = $("login-error");
+    error.classList.toggle("hidden", !message);
+    if (message) error.textContent = message;
+    stopPolling();
+  }
+
+  function showApp() {
+    $("login-view").classList.add("hidden");
+    $("app-view").classList.remove("hidden");
+    startPolling();
+  }
+
+  function startPolling() {
+    stopPolling();
+    state.pollHandle = setInterval(() => {
+      if (document.hidden) return;
+      if (state.page === "player") {
+        if (!state.guildId) return;
+        api(`/api/guilds/${state.guildId}/player`)
+          .then((player) => { state.player = player; renderPlayer(); renderNav(); })
+          .catch(() => {});
+      } else if (state.page === "overview") {
+        loadOverview().catch(() => {});
+      }
+    }, 3000);
+  }
+  function stopPolling() {
+    if (state.pollHandle) clearInterval(state.pollHandle);
+    state.pollHandle = null;
+  }
+
+  async function boot() {
+    try {
+      const session = await api("/api/session");
+      state.csrf = session.csrfToken || "";
+      state.demo = Boolean(session.demo);
+      if ((session.warnings || []).length) {
+        $("warning-banner").classList.remove("hidden");
+        $("warning-banner").innerHTML = `<span aria-hidden="true">⚠</span><div><strong>Remote access</strong><ul>${
+          session.warnings.map((warning) => `<li>${esc(warning)}</li>`).join("")}</ul></div>`;
+      }
+      showApp();
+      renderNav();
+      api("/api/generative")
+        .then((data) => { state.recipes = data.available ? (data.recipes || []) : []; })
+        .catch(() => {});
+      await loadOverview();
+      await loadDetail().catch(() => {});
+      showPage(state.page);
+    } catch (error) {
+      showLogin(error.status === 401 ? "" : error.message);
+    }
+  }
+
+  /* ---- wiring ---- */
+  $("login-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const key = $("dashboard-key").value.trim();
+    try {
+      const result = await api("/api/login", { method: "POST", body: { token: key } });
+      state.csrf = result.csrfToken || "";
+      state.demo = Boolean(result.demo);
+      $("dashboard-key").value = "";
+      showApp();
+      renderNav();
+      await boot();
+    } catch (error) {
+      showLogin(error.message);
+    }
+  });
+
+  $("logout-btn").addEventListener("click", async () => {
+    try { await api("/api/logout", { method: "POST", body: {} }); } catch (error) { /* signed out anyway */ }
+    state.csrf = "";
+    showLogin("");
+  });
+
+  $("refresh-btn").addEventListener("click", () => loadPage(state.page));
+  $("guild-select").addEventListener("change", (event) => selectGuild(event.target.value));
+  $("clear-queue-btn").addEventListener("click", () => action(state.guildId, "clear-queue", {}));
+  $("announce-btn").addEventListener("click", () => action(state.guildId, "announce", {}));
+  $("play-go-btn").addEventListener("click", () => action(state.guildId, "play", {
+    station: $("play-station").value, channelId: $("play-channel").value,
+  }));
+  $("loop-mode").addEventListener("change", (event) => action(state.guildId, "loop", { mode: event.target.value }));
+  $("save-settings-btn").addEventListener("click", saveSettings);
+  $("set-volume").addEventListener("input", (event) => { $("set-volume-tag").textContent = `${event.target.value}%`; });
+  $("sync-commands-btn").addEventListener("click", async () => {
+    try { const result = await api("/api/sync", { method: "POST", body: { guildId: state.guildId } }); toast(result.message || "Synced"); }
+    catch (error) { toast(error.message, true); }
+  });
+  $("sync-commands-top").addEventListener("click", async () => {
+    try { const result = await api("/api/sync", { method: "POST", body: {} }); toast(result.message || "Synced"); }
+    catch (error) { toast(error.message, true); }
+  });
+  $("add-station-btn").addEventListener("click", addStation);
+  $("history-scope").addEventListener("change", loadHistory);
+  $("save-net-btn").addEventListener("click", () => saveNetworkSettings(false));
+  $("rotate-key-btn").addEventListener("click", () => saveNetworkSettings(true));
+  document.querySelectorAll(".switch").forEach((node) => {
+    node.addEventListener("click", () => setSwitch(node.id, !readSwitch(node.id)));
+  });
+
+  boot();
+  </script>
+</body>
+</html>

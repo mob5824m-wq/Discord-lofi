@@ -1,0 +1,12 @@
+{
+  "name": "lofi-dashboard-ui-tests",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Headless DOM tests for dashboard.html, run against a live --demo server.",
+  "scripts": {
+    "test": "node dashboard.ui.js"
+  },
+  "devDependencies": {
+    "jsdom": "^24.0.0"
+  }
+}

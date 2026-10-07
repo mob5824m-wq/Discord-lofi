@@ -1,0 +1,22 @@
+{
+  "bot_token": "",
+  "guilds": {},
+  "stations": [],
+  "default_station": "lofi-girl",
+  "default_volume": 60,
+  "idle_disconnect_minutes": 10,
+  "stay_connected": false,
+  "announce_now_playing": true,
+  "channel_status": true,
+  "sync_commands_on_start": true,
+  "dashboard_enabled": true,
+  "dashboard_host": "127.0.0.1",
+  "dashboard_port": 8790,
+  "dashboard_token": "",
+  "dashboard_allowed_hosts": [],
+  "dashboard_public_url": "",
+  "dashboard_secure_cookie": false,
+  "dashboard_trusted_proxies": [],
+  "dashboard_tls_cert": "",
+  "dashboard_tls_key": ""
+}

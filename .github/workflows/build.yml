@@ -1,0 +1,151 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A pushed fix should not queue behind the run it fixes.
+concurrency:
+  group: build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # --------------------------------------------------------------------- #
+  # The install check and the pytest suite, across the supported Pythons.
+  #
+  # No Discord token and no network access to YouTube is needed: the suite is
+  # built to run against fakes, and `--check` only inspects the machine.
+  # --------------------------------------------------------------------- #
+  tests:
+    name: pytest (Python ${{ matrix.python }})
+    runs-on: ${{ matrix.runs-on }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The declared minimum. Pinned to 22.04 because the 3.9 build is not
+          # published for every ubuntu-latest image.
+          - python: "3.9"
+            runs-on: ubuntu-22.04
+          - python: "3.11"
+            runs-on: ubuntu-latest
+          # 3.13 removed audioop; discord.py>=2.4 pulls in audioop-lts for it,
+          # so this entry is also a check that the pin stays correct.
+          - python: "3.13"
+            runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+
+      # Voice needs an ffmpeg binary and libopus as a shared library; neither is
+      # a Python package, and both are what `--check` exists to verify.
+      - name: Install system audio dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg libopus0
+          ffmpeg -version | head -1
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      # A smoke test of the machine, not of Discord: ffmpeg and opus discovery,
+      # the resolved data directory, the config candidate order. LOFI_TOKEN is a
+      # dummy so the token row is satisfied; nothing here connects anywhere.
+      - name: Install check
+        env:
+          LOFI_TOKEN: ci-dummy-token-not-used-for-anything
+          LOFI_HOME: ${{ runner.temp }}/lofi-check
+        run: python bot.py --check
+
+      - name: pytest
+        env:
+          LOFI_HOME: ${{ runner.temp }}/lofi-pytest
+          LOFI_TOKEN: ci-dummy-token-not-used-for-anything
+        run: python -m pytest -ra
+
+  # --------------------------------------------------------------------- #
+  # The dashboard UI, driven in jsdom against a real server in --demo mode.
+  #
+  # This is the only place the shipped dashboard.html is executed, and it is
+  # the check that catches markup which stops rendering something the API
+  # still sends.
+  # --------------------------------------------------------------------- #
+  ui:
+    name: dashboard UI (jsdom)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install system audio dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg libopus0
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Install jsdom
+        working-directory: tests/ui
+        run: npm install --no-audit --no-fund
+
+      # Demo mode needs no bot token and writes to a throwaway database, so
+      # nothing in this job touches a real Discord account or real history.
+      # The key is fixed and public: it protects a simulated server in a CI
+      # runner that is destroyed at the end of the job.
+      - name: Start the demo dashboard
+        env:
+          LOFI_HOME: ${{ runner.temp }}/lofi-ui
+          LOFI_DASHBOARD_TOKEN: ci-ui-key-0123456789abcdefghijklmnopqrstuvwxyz
+        run: |
+          nohup python bot.py --demo --dashboard-host 127.0.0.1 --dashboard-port 8790 \
+            > "$RUNNER_TEMP/demo.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/demo.pid"
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8790/healthz > /dev/null; then
+              echo "demo dashboard is up after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "demo dashboard did not start; log follows"
+          cat "$RUNNER_TEMP/demo.log"
+          exit 1
+
+      - name: Drive the UI
+        env:
+          LOFI_DASHBOARD_TOKEN: ci-ui-key-0123456789abcdefghijklmnopqrstuvwxyz
+        run: node tests/ui/dashboard.ui.js "$LOFI_DASHBOARD_TOKEN"
+
+      - name: Stop the demo dashboard
+        if: always()
+        run: |
+          if [ -f "$RUNNER_TEMP/demo.pid" ]; then
+            kill "$(cat "$RUNNER_TEMP/demo.pid")" 2>/dev/null || true
+          fi
+
+      - name: Server log
+        if: always()
+        run: cat "$RUNNER_TEMP/demo.log" || true
