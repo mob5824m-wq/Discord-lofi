@@ -40,7 +40,7 @@ Usage:
 Templates live in packaging/ and are rendered with @VERSION@ / @ARCH@:
   packaging/debian/   control, postinst, prerm, postrm, lofi.service,
                       lofi.env.example, lofi.1, copyright
-  packaging/macos/    ReadMe.txt.in
+  packaging/macos/    ReadMe.txt.in, postinstall (the .pkg's only script)
   packaging/windows/  installer.nsi
 """
 
@@ -437,22 +437,15 @@ def make_dmg(binary: Path, arch: str, ver: str, allow_placeholder: bool = False)
         shutil.copy2(PACKAGING / "macos" / "ReadMe.txt.in",
                      payload / "share/doc/lofi" / "ReadMe.txt")
 
-        # postinstall: make sure the binary is executable and drop the
-        # quarantine attribute an unsigned download arrives with.
+        # postinstall: make sure the binary is executable, drop the quarantine
+        # attribute an unsigned download arrives with, and ask once - on a first
+        # install - for the bot token. It lives in packaging/macos as a real
+        # file rather than a string here, so it can be read, linted and tested
+        # the way the Debian maintainer scripts are.
         scripts = tmp / "scripts"
         scripts.mkdir()
         postinstall = scripts / "postinstall"
-        postinstall.write_text(
-            "#!/bin/sh\n"
-            "set -e\n"
-            'BIN="$DSTROOT/../../usr/local/bin/lofi"\n'
-            'if [ -f "$DSTROOT/usr/local/bin/lofi" ]; then BIN="$DSTROOT/usr/local/bin/lofi"; fi\n'
-            'if [ -f "$DSTROOT/bin/lofi" ]; then BIN="$DSTROOT/bin/lofi"; fi\n'
-            'chmod 0755 "$BIN"\n'
-            'xattr -dr com.apple.quarantine "$BIN" 2>/dev/null || true\n'
-            "exit 0\n",
-            encoding="utf-8",
-        )
+        shutil.copy2(PACKAGING / "macos" / "postinstall", postinstall)
         postinstall.chmod(0o755)
 
         pkg = tmp / f"Lofi-{ver}.pkg"

@@ -23,8 +23,10 @@ Lofi <ver> (arm64).dmg
 
 The `.pkg` payload is `bin/lofi` + `share/doc/lofi/*`, installed under
 `/usr/local`, identifier `io.github.mob5824m-wq.lofi`. Its `postinstall`
-chmods the binary and clears `com.apple.quarantine`, which is what an unsigned
-download arrives with.
+chmods the binary, clears `com.apple.quarantine` (what an unsigned download
+arrives with) and asks once - on a first install - for the bot token, which it
+stores in the console user's `~/Library/Application Support/lofi/config.json`,
+mode 0600.
 
 ## Signing
 

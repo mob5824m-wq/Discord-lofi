@@ -85,7 +85,8 @@ Makefile                      make build / dist / dist-all / check / verify
 
 packaging/debian/             real .deb templates, rendered by build.py
   control                       @VERSION@ @ARCH@ @INSTALLED_SIZE@
-  postinst                      chmod, create /etc/lofi/lofi.env, daemon-reload
+  postinst                      chmod, create /etc/lofi/lofi.env, daemon-reload,
+                                ask once for the bot token (tty only)
   prerm                         stop the service before removal
   postrm                        purge /etc/lofi/lofi.env (purge only)
   lofi.service                  systemd unit (installed, NOT enabled)
@@ -94,9 +95,12 @@ packaging/debian/             real .deb templates, rendered by build.py
   copyright                     machine-readable copyright
 packaging/macos/
   ReadMe.txt.in                 instructions shown inside the mounted image
+  postinstall                   chmod, drop the quarantine attribute, ask once
+                                for the bot token (tty or osascript)
 packaging/windows/
   installer.nsi                 NSIS 3 script: Program Files, PATH, shortcuts,
-                                Start Menu, "Apps & features" entry, uninstaller
+                                Start Menu, "Apps & features" entry, the token
+                                page, uninstaller
 ```
 
 ---
@@ -125,13 +129,20 @@ the bot needs a token before it can do anything, and starting it from the
 package would only produce a crash loop.
 
 ```bash
-sudo dpkg -i lofi-linux-amd64.deb
+sudo dpkg -i lofi-linux-amd64.deb   # asks for the bot token when interactive
 sudo apt-get install -f -y          # pulls ffmpeg / libopus0 if missing
-sudo editor /etc/lofi/lofi.env     # put your token here
 lofi --check
 sudo systemctl enable --now lofi    # optional
 sudo apt remove lofi                # uninstall (keeps your data directory)
 ```
+
+`postinst` asks for the token **only when there is somebody to answer** — a tty
+on stdin, `DEBIAN_FRONTEND` not `noninteractive`, and no `LOFI_TOKEN` already
+exported — and only when the machine does not have one yet, so an upgrade is
+never asked. The answer replaces the example's commented `#LOFI_TOKEN=`
+placeholder in `/etc/lofi/lofi.env`, which stays mode 0600. Under `apt`,
+Docker builds and configuration management it asks nothing and prints the
+instructions instead; a blocking read there would hang the install.
 
 The env example is installed to **`/usr/share/lofi/`**, not `/usr/share/doc/`:
 slim Debian/Ubuntu images configure dpkg with `path-exclude=/usr/share/doc/*`,
@@ -154,9 +165,15 @@ Lofi 1.0.1 (arm64).dmg
 
 The package's `postinstall` chmods the binary and clears the quarantine
 attribute an unsigned download arrives with, so a first run does not need
-`xattr -dr com.apple.quarantine` by hand. CI does not sign the binaries — no
-Apple Developer ID in this repo — so Gatekeeper will still ask for
-confirmation on first open (Control-click → Open).
+`xattr -dr com.apple.quarantine` by hand. It also asks for the bot token once,
+when there is not one stored yet: from the terminal (`sudo installer -pkg …`)
+it reads stdin, and from a double-clicked `.pkg` — where Installer.app gives
+the script no stdin — it asks through `osascript` instead. The answer is
+written to `~/Library/Application Support/lofi/config.json` for the console
+user, mode 0600, owned by them rather than by the root the installer runs as,
+because the bot writes its database next to that file. CI does not sign the
+binaries — no Apple Developer ID in this repo — so Gatekeeper will still ask
+for confirmation on first open (Control-click → Open).
 
 Uninstall:
 
@@ -200,9 +217,16 @@ version doing the matching.
 - registry entry under `Software\Microsoft\Windows\CurrentVersion\Uninstall\Lofi`
   → a proper *Apps & features* entry with version, publisher, icon and size
 - refuses to overwrite a running `lofi.exe` with a clear message
+- one page of its own asks for the **bot token** (nsDialogs, pre-filled with
+  whatever is already in the user environment, so an upgrade keeps it) and
+  stores it as `LOFI_TOKEN` in `HKCU\Environment` — the same place `setx`
+  writes, and what the bot reads. It is deliberately *not* written into
+  `config.json`: rewriting JSON from NSIS is how a user's settings get lost on
+  an upgrade
 - uninstaller removes the files, the PATH entry, the shortcuts and the registry
   key, and **leaves your data directory alone** (it holds `config.json` with
-  your token)
+  your token). `LOFI_TOKEN` is left alone too — it is a user setting, and the
+  user may have set it by hand
 
 `ffmpeg` is not bundled and not downloaded by the installer: `winget install
 Gyan.FFmpeg`, and `lofi --check` will say so if it is missing.
@@ -296,8 +320,10 @@ make dist-all                          # copies one binary into all 6 names,
 
 ## Security notes
 
-- No token in any artifact: pass `LOFI_TOKEN` at runtime or put it in
-  `/etc/lofi/lofi.env` (mode 0600, created by `postinst`).
+- No token in any artifact: the installers ask for it once and store it
+  themselves (`/etc/lofi/lofi.env` mode 0600, the macOS user's
+  `config.json` mode 0600, `HKCU\Environment` on Windows), or you can pass
+  `LOFI_TOKEN` at runtime / put it in the file by hand.
 - `config.json` is written to `LOFI_HOME` / the platform state dir with `0600`,
   never bundled.
 - The dashboard binds to `127.0.0.1` even when installed; exposing it is

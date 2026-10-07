@@ -14,6 +14,10 @@
 ; prompt, creates Start Menu / Desktop shortcuts and registers an entry under
 ; "Apps & features" (ARP) so it can be uninstalled properly.
 ;
+; One page of its own asks for the Discord bot token. The token is the only
+; thing the installer cannot work out for itself, and a first install that asks
+; for it means the next command the user types is the one that works.
+;
 ; System dependencies that are NOT bundled: ffmpeg. The installer does not
 ; fetch it (an installer that downloads things at install time is a supply-chain
 ; decision, not a packaging one); `lofi --check` tells the user what to install.
@@ -81,11 +85,61 @@ VIAddVersionKey "LegalCopyright"  "Copyright (c) ${PUBLISHER}"
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_LICENSE "${LICENSE}"
 !insertmacro MUI_PAGE_DIRECTORY
+; The token page is a plain `Page custom`: nsDialogs comes in with MUI2.nsh
+; (see Contrib/Modern UI 2/MUI2.nsh), so there is nothing extra to include.
+Page custom TokenPage TokenPageLeave
 !insertmacro MUI_PAGE_INSTFILES
 !insertmacro MUI_PAGE_FINISH
 !insertmacro MUI_UNPAGE_CONFIRM
 !insertmacro MUI_UNPAGE_INSTFILES
 !insertmacro MUI_LANGUAGE "English"
+
+; ---------------------------------------------------------------------------
+; The token page.
+;
+; One question, on a first install: paste the bot token. Everything else a
+; first run needs - ffmpeg, libopus, the dashboard key - has a default, a
+; fallback or a diagnostic that names the fix, so this page asks for the token
+; and nothing else. An empty answer is not an error: nothing is stored and the
+; printed instructions still say where the token goes.
+;
+; The answer is written to the *user's* environment, which is where LOFI_TOKEN
+; is read from and what `setx LOFI_TOKEN ...` would have written:
+;   HKCU\Environment = LOFI_TOKEN
+; It is deliberately not written into config.json: rewriting a JSON file from
+; NSIS is how a user's dashboard settings get lost on an upgrade.
+;
+; An upgrade pre-fills the field with the token already stored, so clicking
+; Next keeps it. Note that this is per user, like the environment itself: the
+; token is stored for whoever runs the installer.
+; ---------------------------------------------------------------------------
+Var TokenInput
+Var TokenValue
+
+Function TokenPage
+  !insertmacro MUI_HEADER_TEXT "Bot token" "Optional - Lofi can be told later with LOFI_TOKEN"
+  ReadRegStr $TokenValue HKCU "Environment" "LOFI_TOKEN"
+
+  nsDialogs::Create 1018
+  Pop $0
+  ${If} $0 == error
+    Abort
+  ${EndIf}
+
+  ${NSD_CreateLabel} 0 0 100% 36u "Lofi needs a Discord bot token to connect.$\nPaste the one from your application's Bot page at discord.com/developers/applications.$\nLeave it empty to skip; 'lofi --check' will tell you what is still missing."
+  Pop $0
+
+  ${NSD_CreateText} 0 42u 100% 12u ""
+  Pop $TokenInput
+  ${NSD_SetText} $TokenInput $TokenValue
+
+  ${NSD_SetFocus} $TokenInput
+  nsDialogs::Show
+FunctionEnd
+
+Function TokenPageLeave
+  ${NSD_GetText} $TokenInput $TokenValue
+FunctionEnd
 
 ; ---------------------------------------------------------------------------
 ; PATH helpers.
@@ -137,6 +191,15 @@ Section "Lofi (required)" SEC_MAIN
   ; PATH
   !insertmacro AddToMachinePath "$INSTDIR"
 
+  ; The bot token, asked for on the page above. An empty field means "leave
+  ; whatever is already there alone", so an upgrade that just clicks Next keeps
+  ; the token it installed last time.
+  ${If} $TokenValue != ""
+    WriteRegStr HKCU "Environment" "LOFI_TOKEN" "$TokenValue"
+    SendMessage ${HWND_BROADCAST} ${WM_SETTINGCHANGE} 0 "STR:Environment" /TIMEOUT=5000
+    DetailPrint "Bot token saved to the user environment (LOFI_TOKEN)"
+  ${EndIf}
+
   ; Start Menu
   CreateDirectory "$SMPROGRAMS\${APPNAME}"
   CreateShortCut "$SMPROGRAMS\${APPNAME}\Lofi --check.lnk" "$INSTDIR\lofi.exe" "--check" "$INSTDIR\lofi.exe" 0 SW_SHOWNORMAL "" "Check the Lofi install (ffmpeg, opus, token)"
@@ -170,6 +233,11 @@ Section "Uninstall"
   ; Never delete the data directory: it holds config.json with the bot token
   ; and lofi.db with the listening history. Tell the user where it is instead.
   !insertmacro RemoveFromMachinePath "$INSTDIR"
+
+  ; The bot token is not part of the payload either - it is a user environment
+  ; variable, and the user may have set it by hand, so it is left alone. Say
+  ; where it is instead of deleting it.
+  DetailPrint "LOFI_TOKEN is a user environment variable; remove it by hand if you want it gone."
 
   Delete "$SMPROGRAMS\${APPNAME}\Lofi --check.lnk"
   Delete "$SMPROGRAMS\${APPNAME}\Lofi dashboard (demo).lnk"

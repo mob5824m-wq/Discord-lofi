@@ -26,6 +26,61 @@ if [ ! -f "$ENVFILE" ] && [ -f "$EXAMPLE" ]; then
     chmod 0600 "$ENVFILE"
 fi
 
+# 2b. Ask for the bot token, once, when there is not one already.
+#
+#     The token is the one thing the package cannot invent, and asking here
+#     means the very next command the user types is the one that works. A
+#     machine that already has a token - an upgrade, a reinstall, a redeploy -
+#     is never asked again: the file above holds whatever was put in it.
+#
+#     Nothing is asked when there is nobody to answer. apt, Docker builds and
+#     configuration management run maintainer scripts with stdin closed or
+#     redirected, and a read that blocks there hangs the install until it is
+#     killed; those runs fall through to the printed instructions instead.
+HAVE_TOKEN=no
+# Belt and braces: the append below needs a file to append to, and it must be
+# 0600 from the moment it holds a token.
+if [ ! -f "$ENVFILE" ]; then
+    if [ -f "$EXAMPLE" ]; then
+        cp "$EXAMPLE" "$ENVFILE"
+    else
+        : > "$ENVFILE"
+    fi
+    chmod 0600 "$ENVFILE" 2>/dev/null || true
+fi
+if [ -f "$ENVFILE" ] && grep -Eq '^[[:space:]]*LOFI_TOKEN=[^[:space:]]+' "$ENVFILE"; then
+    HAVE_TOKEN=yes
+fi
+
+ASKED=no
+if [ "$HAVE_TOKEN" = no ] && [ -z "${LOFI_TOKEN:-}" ] \
+   && [ "${DEBIAN_FRONTEND:-}" != "noninteractive" ] && [ -t 0 ] && [ -t 1 ]; then
+    printf 'Discord bot token (leave empty to skip): '
+    if read -r REPLY_TOKEN && [ -n "$REPLY_TOKEN" ]; then
+        NEWFILE="$ENVFILE.new"
+        # Put the token where the example's commented placeholder is, so it
+        # stays in the "Required" section instead of drifting to the bottom of
+        # the file; append it when there is no placeholder to replace.
+        # A Discord token is letters, digits, dots, dashes and underscores, so
+        # awk's -v needs no escaping here.
+        if awk -v tok="$REPLY_TOKEN" '
+                /^#LOFI_TOKEN=/ { printf "LOFI_TOKEN=%s\n", tok; seen = 1; next }
+                { print }
+                END { if (!seen) printf "LOFI_TOKEN=%s\n", tok }
+            ' "$ENVFILE" > "$NEWFILE" 2>/dev/null && [ -s "$NEWFILE" ]; then
+            # cat into the original rather than mv: same inode, so the 0600
+            # mode set above is kept.
+            cat "$NEWFILE" > "$ENVFILE"
+        else
+            printf 'LOFI_TOKEN=%s\n' "$REPLY_TOKEN" >> "$ENVFILE"
+        fi
+        rm -f "$NEWFILE"
+        ASKED=yes
+        echo "  Saved to $ENVFILE (mode 0600)."
+    fi
+    echo ""
+fi
+
 # 3. Tell systemd about the new unit. We never enable or start it here: the bot
 #    needs a token before it can do anything useful, so starting it from the
 #    package would only produce a crash loop in everyone's journal.
@@ -36,12 +91,19 @@ fi
 echo ""
 echo "  Lofi installed."
 echo ""
-echo "  1. Put your bot token in the environment file (or export it):"
-echo "       sudo editor /etc/lofi/lofi.env"
+if [ "$ASKED" = yes ]; then
+    echo "  1. Your bot token is saved in $ENVFILE (mode 0600)."
+else
+    echo "  1. Put your bot token in the environment file (or export it):"
+    echo "       sudo editor $ENVFILE"
+fi
 echo "  2. Check the machine can actually play audio:"
 echo "       lofi --check"
 echo "  3. Run it in the foreground, or as a service:"
 echo "       sudo systemctl enable --now lofi"
+echo ""
+echo "  The installer asks for the token when it is run interactively; so does"
+echo "  'lofi' itself, the first time it runs with no token set."
 echo ""
 echo "  The dashboard is bound to 127.0.0.1:8790 by default; see docs/SETUP.md"
 echo "  before exposing it to anything else."

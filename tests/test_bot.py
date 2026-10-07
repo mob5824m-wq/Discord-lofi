@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import io
 import logging
+import os
 import sys
 from contextlib import redirect_stderr, redirect_stdout
 
@@ -304,6 +305,93 @@ def test_a_too_short_stored_token_exits_with_an_explanation(tmp_state, monkeypat
     assert bot_module.main([]) == 2
     output = capsys.readouterr().out
     assert "at least 32 characters" in output
+
+
+# --------------------------------------------------------------------------- #
+# First run: the one question
+# --------------------------------------------------------------------------- #
+class _FakeTerminal(io.StringIO):
+    """stdin the way a terminal sees it: a tty with the answer already typed."""
+
+    def isatty(self) -> bool:
+        return True
+
+
+def test_a_first_run_asks_for_the_token_and_saves_it(tmp_state, monkeypatch, capsys):
+    monkeypatch.delenv("LOFI_TOKEN", raising=False)
+    monkeypatch.setattr(sys, "stdin", _FakeTerminal("MTk4NzY1NDMy.MTEyMjMzNDQ1.NjY3ODg5\n"))
+    config = dict(paths.DEFAULT_CONFIG)
+
+    token = bot_module._prompt_for_token(config)
+
+    assert token == "MTk4NzY1NDMy.MTEyMjMzNDQ1.NjY3ODg5"
+    assert config["bot_token"] == token                       # adopted for this run
+    assert paths.load_config()["bot_token"] == token           # and remembered for the next
+    assert "Bot token:" in capsys.readouterr().out
+
+
+def test_the_prompt_says_where_a_token_comes_from(tmp_state, monkeypatch, capsys):
+    monkeypatch.setattr(sys, "stdin", _FakeTerminal("a.b.c\n"))
+    bot_module._prompt_for_token(dict(paths.DEFAULT_CONFIG))
+    assert "developers/applications" in capsys.readouterr().out
+
+
+def test_the_saved_config_is_private(tmp_state, monkeypatch):
+    """A token on disk must not be readable by every other user on the box."""
+    monkeypatch.setattr(sys, "stdin", _FakeTerminal("a.b.c\n"))
+    bot_module._prompt_for_token(dict(paths.DEFAULT_CONFIG))
+    if os.name != "nt":
+        assert oct(paths.config_write_path().stat().st_mode & 0o777) == "0o600"
+
+
+def test_an_empty_answer_is_not_an_error(tmp_state, monkeypatch):
+    """Pressing Enter falls through to the instructions, not to a crash."""
+    monkeypatch.setattr(sys, "stdin", _FakeTerminal("\n"))
+    assert bot_module._prompt_for_token(dict(paths.DEFAULT_CONFIG)) == ""
+    assert not (tmp_state / "config.json").exists()          # nothing was written
+
+
+def test_nothing_is_asked_when_nobody_can_answer(tmp_state, monkeypatch):
+    """systemd, Docker and pipes have no keyboard: a read there would hang."""
+    monkeypatch.setattr(sys, "stdin", io.StringIO("a-token-from-a-pipe\n"))
+    assert bot_module._prompt_for_token(dict(paths.DEFAULT_CONFIG)) == ""
+    assert not (tmp_state / "config.json").exists()
+
+
+def test_a_token_that_cannot_be_saved_still_works_for_this_run(tmp_state, monkeypatch):
+    monkeypatch.setattr(sys, "stdin", _FakeTerminal("a.b.c\n"))
+    monkeypatch.setattr(paths, "write_config", lambda updated: (_ for _ in ()).throw(OSError("read-only")))
+    assert bot_module._prompt_for_token(dict(paths.DEFAULT_CONFIG)) == "a.b.c"
+
+
+def test_a_first_run_goes_from_zero_to_connecting_in_one_step(tmp_state, monkeypatch, capsys):
+    """The point of the prompt: no editing a file between installing and running."""
+    monkeypatch.delenv("LOFI_TOKEN", raising=False)
+    monkeypatch.setattr(sys, "stdin", _FakeTerminal("MTk4.NjY1.NDMy\n"))
+    built = []
+
+    class FakeBot:
+        def __init__(self, config, start_dashboard=True):
+            built.append(config["bot_token"])
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc):
+            return False
+
+        async def start(self, token):
+            built.append(token)
+
+    monkeypatch.setattr(bot_module, "LofiBot", FakeBot)
+
+    def fake_run(coro):
+        coro.close()          # never awaited: there is no Discord to talk to here
+        return 0
+
+    monkeypatch.setattr(bot_module.asyncio, "run", fake_run)
+    assert bot_module.main([]) == 0
+    assert built == ["MTk4.NjY1.NDMy"]
 
 
 # --------------------------------------------------------------------------- #

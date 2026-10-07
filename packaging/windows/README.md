@@ -21,8 +21,14 @@ lofi --check                                # on PATH after install
   real *Apps & features* entry with version, publisher, icon and size
 - writes PE version metadata, so Explorer shows `1.0.1` instead of `0.0.0.0`
 - refuses to overwrite a running `lofi.exe` with a clear message
+- one page asks for the **bot token** (pre-filled with whatever is already
+  stored, so an upgrade keeps it) and writes it to `HKCU\Environment` as
+  `LOFI_TOKEN` — the same place `setx` writes and what the bot reads. Not into
+  `config.json`: rewriting JSON from NSIS is how settings get lost on an upgrade
 - uninstaller deletes the files, the PATH entry, the shortcuts and the registry
-  key, and leaves your data directory alone (it holds `config.json` + token)
+  key, and leaves your data directory alone (it holds `config.json` + token).
+  `LOFI_TOKEN` is left alone too: it is a user setting, and you may have set it
+  by hand
 
 `ffmpeg` is **not** bundled and **not** downloaded during install: an installer
 that fetches things at install time is a supply-chain decision, not a packaging

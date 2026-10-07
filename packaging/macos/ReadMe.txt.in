@@ -21,8 +21,8 @@ INSTALL (recommended — the .pkg)
 
   4. Check the machine, then run it:
 
-       LOFI_TOKEN=your-bot-token lofi --check
-       LOFI_TOKEN=your-bot-token lofi
+       lofi --check
+       lofi
 
 INSTALL (manual — no installer)
   Drag "portable/lofi" into /usr/local/bin (or anywhere on your PATH), then:
@@ -31,6 +31,11 @@ INSTALL (manual — no installer)
     LOFI_TOKEN=... lofi --check
 
 FIRST RUN NOTES
+  The installer asks for your bot token once, on a first install, and stores it
+  in ~/Library/Application Support/lofi/config.json (mode 0600). Answer with an
+  empty line, or install without a screen, and nothing is stored: `lofi` will
+  ask for the token on its first run instead.
+
   Gatekeeper: unsigned downloads are quarantined. If macOS refuses to run the
   binary, clear the quarantine attribute instead of disabling Gatekeeper:
 

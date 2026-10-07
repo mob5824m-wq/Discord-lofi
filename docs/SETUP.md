@@ -30,16 +30,27 @@ At <https://discord.com/developers/applications>:
 4. You do **not** need OAuth2 redirect URIs, and you do not need to enable anything under
    "Privileged Gateway Intents" — see the next section.
 
-Put the token where the bot will find it, in one of two ways:
+Put the token where the bot will find it, in one of three ways:
 
 ```bash
+# let the first run ask for it: one prompt, then it stores the answer and starts
+lofi                       # "Bot token: " → paste → Enter
+
 # a file (gitignored, written 0600)
 cp config.example.json config.json
-$EDITOR config.json          # "bot_token": "…"
+$EDITOR config.json        # "bot_token": "…"
 
 # or the environment, which overrides the file and never touches disk
 export LOFI_TOKEN="…"
 ```
+
+The prompt is the whole first-run setup: it asks for the token and nothing else, because that is
+the only thing Lofi cannot work out for itself. Everything else has a default, a fallback, or
+`lofi --check` to name the fix. It is skipped when there is nobody to answer it - systemd, Docker
+and pipes have no keyboard - and those runs are told what to set instead. The installers ask the
+same question: the Debian package writes it to `/etc/lofi/lofi.env`, the macOS package to
+`~/Library/Application Support/lofi/config.json`, and the Windows setup to `LOFI_TOKEN` in your
+user environment.
 
 A token is a credential that can act as your bot. Do not paste it into chat, an issue, a screenshot
 or a commit. If it leaks: Bot → **Reset Token**, and every running copy stops working immediately.

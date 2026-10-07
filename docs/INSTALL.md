@@ -47,11 +47,11 @@ this one are the from-source path.
 
 | OS | Download | Install |
 |---|---|---|
-| Windows x64 | `lofi-windows-amd64-setup.exe` | run it — installs to `C:\Program Files\Lofi`, adds `lofi` to PATH |
+| Windows x64 | `lofi-windows-amd64-setup.exe` | run it — installs to `C:\Program Files\Lofi`, adds `lofi` to PATH, asks for the bot token |
 | Windows ARM64 | `lofi-windows-arm64-setup.exe` | run it |
-| macOS Apple Silicon | `lofi-macos-arm64.dmg` | open the image, run `Lofi.pkg` |
+| macOS Apple Silicon | `lofi-macos-arm64.dmg` | open the image, run `Lofi.pkg` — it asks for the bot token |
 | macOS Intel | `lofi-macos-amd64.dmg` | open the image, run `Lofi.pkg` |
-| Debian / Ubuntu amd64 | `lofi-linux-amd64.deb` | `sudo dpkg -i lofi-linux-amd64.deb` |
+| Debian / Ubuntu amd64 | `lofi-linux-amd64.deb` | `sudo dpkg -i lofi-linux-amd64.deb` — asks for the bot token |
 | Debian / Ubuntu arm64 | `lofi-linux-arm64.deb` | `sudo dpkg -i lofi-linux-arm64.deb` |
 
 All of them are on the [latest release
@@ -78,14 +78,30 @@ winget install Gyan.FFmpeg
 lofi --check
 ```
 
-Then set the token and run it — on Linux the natural place for a service is
-`/etc/lofi/lofi.env` (created by the package, mode 0600):
+Then run it. Every installer asks for the bot token once, when it is run
+interactively, and stores it where the bot looks first:
+
+| Installer | Where the token is stored |
+|---|---|
+| Debian / Ubuntu | `/etc/lofi/lofi.env`, mode 0600 (created by the package) |
+| macOS | `~/Library/Application Support/lofi/config.json`, mode 0600 |
+| Windows | `LOFI_TOKEN` in your user environment |
+
+An upgrade is never asked again, and answering with an empty line is always
+allowed — you are back to setting `LOFI_TOKEN` by hand. Non-interactive installs
+(`apt`, `installer -pkg` from a script, configuration management) ask nothing:
+there is nobody to answer, and a prompt there would hang the install.
+
+```bash
+lofi --check                        # ✓ ffmpeg, ✓ libopus, ✓ bot token …
+LOFI_TOKEN=... lofi                 # foreground
+sudo systemctl enable --now lofi    # or as a service
+```
+
+If you skipped the prompt, the token can still be set by hand:
 
 ```bash
 sudo editor /etc/lofi/lofi.env      # LOFI_TOKEN=...
-lofi --check
-LOFI_TOKEN=... lofi                 # foreground
-sudo systemctl enable --now lofi    # or as a service
 ```
 
 Check a download before you trust it:

@@ -408,6 +408,11 @@ Note these two go to **stderr as plain prints**, not through the logger, because
 logging is configured — a `journalctl -p warning` filter will still show them, but a log-parsing
 script looking for the `Lofi:` prefix will not.
 
+The second one only appears when there is nobody to answer a prompt. Run `lofi` on a terminal with
+no token set and you get `Bot token:` instead: one question, answered once, saved to `config.json`
+and never asked again. Same story for the installers — the Debian package, the macOS `.pkg` and the
+Windows setup each ask at install time and store the answer themselves.
+
 ## Filing a bug report
 
 Collect these four things and most issues are diagnosable in one round trip:

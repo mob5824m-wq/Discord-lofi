@@ -1,0 +1,64 @@
+#!/bin/sh
+# postinstall for the Lofi .pkg (pkgbuild --scripts).
+#
+# Two jobs. First, make the unpacked binary executable and drop the quarantine
+# attribute an unsigned download arrives with, so a first run is not blocked by
+# Gatekeeper. Second - once, on a first install - ask for the Discord bot
+# token, which is the one thing the package cannot work out for itself.
+#
+# An empty answer is not an error: nothing is stored, and the printed
+# instructions still say where the token goes. A machine that already has a
+# token - an upgrade or a reinstall - is never asked again.
+set -e
+
+BIN="$DSTROOT/../../usr/local/bin/lofi"
+if [ -f "$DSTROOT/usr/local/bin/lofi" ]; then BIN="$DSTROOT/usr/local/bin/lofi"; fi
+if [ -f "$DSTROOT/bin/lofi" ]; then BIN="$DSTROOT/bin/lofi"; fi
+chmod 0755 "$BIN"
+xattr -dr com.apple.quarantine "$BIN" 2>/dev/null || true
+
+# Where Lofi keeps its config on macOS. The installer runs as root, so the
+# person who is actually going to run the bot is taken from the console rather
+# than from $HOME, which would be root's.
+CONSOLE_USER="$(/usr/bin/stat -f%Su /dev/console 2>/dev/null || true)"
+CONF_DIR="/Users/$CONSOLE_USER/Library/Application Support/lofi"
+CONF="$CONF_DIR/config.json"
+
+save_token() {
+    # A Discord token is letters, digits, dots, dashes and underscores, so it
+    # needs no JSON escaping. Anything else is refused rather than written into
+    # a file the bot then fails to parse.
+    case "$1" in
+        "" | *\"* | *\\*) return 1 ;;
+    esac
+    mkdir -p "$CONF_DIR" || return 1
+    # The bot merges this file over its defaults, so writing just the token
+    # leaves every other setting at its default rather than dropping it.
+    printf '{\n  "bot_token": "%s"\n}\n' "$1" > "$CONF" || return 1
+    chmod 0600 "$CONF"
+    # The bot runs as the person at the keyboard, not as the root this script
+    # runs as - and it writes lofi.db next to this file, so the directory has
+    # to belong to them too.
+    chown "$CONSOLE_USER" "$CONF_DIR" "$CONF" 2>/dev/null || true
+    return 0
+}
+
+if [ -n "$CONSOLE_USER" ] && [ "$CONSOLE_USER" != root ] && [ ! -f "$CONF" ]; then
+    REPLY_TOKEN=""
+    if [ -t 0 ]; then
+        # `sudo installer -pkg ...` from a terminal: ask on the terminal.
+        printf 'Discord bot token (leave empty to skip): '
+        read -r REPLY_TOKEN || REPLY_TOKEN=""
+    elif [ -x /usr/bin/osascript ]; then
+        # A double-clicked .pkg: Installer.app runs this script with stdin
+        # closed, so ask through the GUI the user is already looking at. It
+        # fails quietly when nobody is logged in to a graphical session.
+        REPLY_TOKEN="$(/usr/bin/osascript -e 'text returned of (display dialog "Lofi needs a Discord bot token to connect. Paste the one from the Bot page of your application at discord.com/developers/applications." with title "Lofi" default answer "" buttons {"Skip", "Save"} default button "Save")' 2>/dev/null || true)"
+    fi
+    if [ -n "$REPLY_TOKEN" ] && save_token "$REPLY_TOKEN"; then
+        echo "  Saved to $CONF (mode 0600)."
+    fi
+    echo ""
+fi
+
+exit 0

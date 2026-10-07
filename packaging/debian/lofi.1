@@ -25,7 +25,10 @@ Audio can come from YouTube broadcasts, SomaFM radio streams, your own
 beats rendered locally. The last two work with no network connection.
 .PP
 The bot token is read from the \fBLOFI_TOKEN\fR environment variable or from
-\fIconfig.json\fR in the data directory. It is never bundled in the package.
+\fIconfig.json\fR in the data directory. It is never bundled in the package: a
+first run with no token asks for one and stores it in \fIconfig.json\fR, and
+this package asks for it at install time and stores it in
+\fI/etc/lofi/lofi.env\fR (mode 0600).
 .SH OPTIONS
 .TP
 .B \-\-check

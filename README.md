@@ -37,11 +37,11 @@ Pick your machine:
 
 | OS | Download | What the installer does |
 |---|---|---|
-| **Windows** x64 | [`lofi-windows-amd64-setup.exe`](https://github.com/mob5824m-wq/Discord-lofi/releases/latest/download/lofi-windows-amd64-setup.exe) | NSIS installer: `C:\Program Files\Lofi\lofi.exe`, added to PATH, Start Menu shortcuts, uninstaller in *Apps & features* |
+| **Windows** x64 | [`lofi-windows-amd64-setup.exe`](https://github.com/mob5824m-wq/Discord-lofi/releases/latest/download/lofi-windows-amd64-setup.exe) | NSIS installer: `C:\Program Files\Lofi\lofi.exe`, added to PATH, Start Menu shortcuts, uninstaller in *Apps & features*, and one page that asks for the bot token |
 | **Windows** ARM64 | [`lofi-windows-arm64-setup.exe`](https://github.com/mob5824m-wq/Discord-lofi/releases/latest/download/lofi-windows-arm64-setup.exe) | same, for Windows on ARM — best effort: its runner cannot always install the Python dependencies, so this one is occasionally absent |
-| **macOS** Apple Silicon | [`lofi-macos-arm64.dmg`](https://github.com/mob5824m-wq/Discord-lofi/releases/latest/download/lofi-macos-arm64.dmg) | open the disk image, run `Lofi.pkg` to install `/usr/local/bin/lofi` |
+| **macOS** Apple Silicon | [`lofi-macos-arm64.dmg`](https://github.com/mob5824m-wq/Discord-lofi/releases/latest/download/lofi-macos-arm64.dmg) | open the disk image, run `Lofi.pkg` to install `/usr/local/bin/lofi` and be asked for the token |
 | **macOS** Intel | [`lofi-macos-amd64.dmg`](https://github.com/mob5824m-wq/Discord-lofi/releases/latest/download/lofi-macos-amd64.dmg) | same, for Intel Macs |
-| **Debian / Ubuntu** amd64 | [`lofi-linux-amd64.deb`](https://github.com/mob5824m-wq/Discord-lofi/releases/latest/download/lofi-linux-amd64.deb) | `dpkg` → `/usr/local/bin/lofi`, systemd unit (installed, not enabled), man page, `/etc/lofi/lofi.env` |
+| **Debian / Ubuntu** amd64 | [`lofi-linux-amd64.deb`](https://github.com/mob5824m-wq/Discord-lofi/releases/latest/download/lofi-linux-amd64.deb) | `dpkg` → `/usr/local/bin/lofi`, systemd unit (installed, not enabled), man page, `/etc/lofi/lofi.env` (asks for the token when run interactively) |
 | **Debian / Ubuntu** arm64 | [`lofi-linux-arm64.deb`](https://github.com/mob5824m-wq/Discord-lofi/releases/latest/download/lofi-linux-arm64.deb) | same, for Raspberry Pi / Graviton |
 
 
@@ -73,8 +73,17 @@ Verify a download before running it:
 sha256sum -c SHA256SUMS.txt --ignore-missing
 ```
 
-No installer contains a bot token — pass `LOFI_TOKEN` at runtime. The 6-runner
-CI matrix, the packaging templates and local builds:
+No installer ships a bot token. Each one **asks for it once, at install time** — the
+Debian package writes it to `/etc/lofi/lofi.env` (mode 0600), the macOS package to
+`~/Library/Application Support/lofi/config.json`, the Windows setup to `LOFI_TOKEN` in
+your user environment — and an upgrade never asks again. Skip the prompt (or answer it
+with an empty line) and you are back to setting `LOFI_TOKEN` by hand.
+
+The first *run* asks too: `lofi` with no token anywhere prints `Bot token:`, saves what
+you paste and carries on, so a fresh install is one question rather than an editing
+session. See [docs/SETUP.md](docs/SETUP.md#1-create-the-application).
+
+The 6-runner CI matrix, the packaging templates and local builds:
 [`docs/PACKAGING.md`](docs/PACKAGING.md) · [`scripts/build.py`](scripts/build.py) ·
 [`scripts/verify_packages.py`](scripts/verify_packages.py).
 
@@ -122,7 +131,15 @@ Message Content, so there is nothing to enable in the developer portal for the b
 Step by step, including what each permission is for and what breaks without it:
 [docs/SETUP.md](docs/SETUP.md).
 
-**3. Configure**
+**3. Configure** — or skip it: the first run asks for the token
+
+```bash
+python3 bot.py             # "Bot token: " → paste → Enter, then it connects
+```
+
+That one prompt is the whole setup: it asks for the token, stores it in `config.json`
+(gitignored, mode 0600) and starts. Nothing else is asked, because nothing else is needed —
+`--check` reports on ffmpeg, libopus and the rest. Prefer to do it yourself:
 
 ```bash
 cp config.example.json config.json   # config.json is gitignored: it holds your token
