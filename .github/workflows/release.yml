@@ -258,8 +258,18 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          python -m pip install --upgrade pip 2>&1 | tee pip.log
-          pip install -r requirements.txt pyinstaller 2>&1 | tee -a pip.log
+          # Preflight: which platform tag pip will match wheels against, and the
+          # pip that does the matching. A source build of PyNaCl on
+          # windows-11-arm fails with WinError 193, and the fix depends on
+          # whether the interpreter is arm64 and pip new enough to say so.
+          python -c "import sys, sysconfig; print('python', sys.version.split()[0], sysconfig.get_platform())" 2>&1 | tee pip.log
+          python -m pip install --upgrade pip 2>&1 | tee -a pip.log
+          pip --version | tee -a pip.log
+          # Prefer wheels on every platform: a source build here is a build of
+          # last resort (PyNaCl needs a working C toolchain), and on Windows
+          # ARM64 it fails outright.
+          pip install --only-binary=:all: -r requirements.txt pyinstaller 2>&1 | tee -a pip.log \
+            || pip install -r requirements.txt pyinstaller 2>&1 | tee -a pip.log
           pyinstaller --version
 
       - name: Resolve version
