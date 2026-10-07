@@ -251,7 +251,11 @@ jobs:
             Write-Host "ffmpeg install failed - the installer build does not need it (not fatal)"
           }
 
+      # shell: bash is not decoration. The default shell on a Windows runner is
+      # pwsh, and this step uses `set -o pipefail` / `tee` so the tail of a
+      # failed dependency install survives into the diagnostics step.
       - name: Install Python dependencies
+        shell: bash
         run: |
           set -o pipefail
           python -m pip install --upgrade pip 2>&1 | tee pip.log
