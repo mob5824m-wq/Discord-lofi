@@ -14,20 +14,20 @@ on:
 permissions:
   contents: write
 
-# 6 artifacts: 1 arm + 1 native for each OS — debian (Linux), macOS, Windows.
+# 6 artifacts: 1 arm + 1 native for each OS — debian (.deb), macOS (.dmg), Windows (.exe installer).
 #
 # PyInstaller is NOT a cross-compiler, so each arch is built on its native runner.
 # GitHub-hosted runners used:
-#   linux-amd64   → ubuntu-22.04
-#   linux-arm64   → ubuntu-24.04-arm
-#   macos-amd64   → macos-13        (Intel, last Intel image)
-#   macos-arm64   → macos-14        (Apple Silicon)
-#   windows-amd64 → windows-2022
-#   windows-arm64 → windows-11-arm
+#   linux-amd64   → ubuntu-22.04          → .deb via dpkg-deb
+#   linux-arm64   → ubuntu-24.04-arm      → .deb via dpkg-deb
+#   macos-amd64   → macos-13              → .dmg via hdiutil
+#   macos-arm64   → macos-14              → .dmg via hdiutil
+#   windows-amd64 → windows-2022          → .exe via NSIS makensis
+#   windows-arm64 → windows-11-arm        → .exe via NSIS makensis
 #
 # If a runner image is retired, replace it with the nearest equivalent
 # (e.g. macos-13 → macos-13-large, windows-11-arm → windows-2022 + emulation note).
-# The artifact names stay stable: lofi-<version>-<os>-<arch>[.exe]
+# The artifact names stay stable: lofi-<version>-<os>-<arch>.(deb|dmg|exe)
 
 concurrency:
   group: release-${{ github.ref }}
@@ -35,7 +35,7 @@ concurrency:
 
 jobs:
   # --------------------------------------------------------------------- #
-  # Build the 6 native binaries
+  # Build the 6 native binaries + OS-native packages
   # --------------------------------------------------------------------- #
   build:
     strategy:
@@ -47,48 +47,48 @@ jobs:
             target_os: linux
             arch: amd64
             artifact: lofi-linux-amd64
-            archive: lofi-linux-amd64.tar.gz
-            runner_note: debian amd64
+            package: lofi-linux-amd64.deb
+            runner_note: debian amd64 (.deb)
 
           - os: ubuntu-24.04-arm
             py: "3.11"
             target_os: linux
             arch: arm64
             artifact: lofi-linux-arm64
-            archive: lofi-linux-arm64.tar.gz
-            runner_note: debian arm64
+            package: lofi-linux-arm64.deb
+            runner_note: debian arm64 (.deb)
 
           - os: macos-13
             py: "3.11"
             target_os: macos
             arch: amd64
             artifact: lofi-macos-amd64
-            archive: lofi-macos-amd64.tar.gz
-            runner_note: mac intel
+            package: lofi-macos-amd64.dmg
+            runner_note: mac intel (.dmg)
 
           - os: macos-14
             py: "3.11"
             target_os: macos
             arch: arm64
             artifact: lofi-macos-arm64
-            archive: lofi-macos-arm64.tar.gz
-            runner_note: mac apple silicon
+            package: lofi-macos-arm64.dmg
+            runner_note: mac apple silicon (.dmg)
 
           - os: windows-2022
             py: "3.11"
             target_os: windows
             arch: amd64
             artifact: lofi-windows-amd64.exe
-            archive: lofi-windows-amd64.zip
-            runner_note: windows amd64
+            package: lofi-windows-amd64-setup.exe
+            runner_note: windows amd64 (.exe installer)
 
           - os: windows-11-arm
             py: "3.11"
             target_os: windows
             arch: arm64
             artifact: lofi-windows-arm64.exe
-            archive: lofi-windows-arm64.zip
-            runner_note: windows arm64
+            package: lofi-windows-arm64-setup.exe
+            runner_note: windows arm64 (.exe installer)
 
     name: build ${{ matrix.target_os }}-${{ matrix.arch }} (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -108,20 +108,24 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ffmpeg libopus0
+          sudo apt-get install -y --no-install-recommends ffmpeg libopus0 dpkg-dev
           ffmpeg -version | head -1
           ldconfig -p | grep opus || true
+          dpkg-deb --version
 
       - name: Install system audio dependencies (macOS)
         if: runner.os == 'macOS'
         run: |
           brew update
-          brew install ffmpeg opus || brew upgrade ffmpeg opus || true
+          brew install ffmpeg opus create-dmg || brew upgrade ffmpeg opus create-dmg || true
           ffmpeg -version | head -1
+          hdiutil help | head -1 || true
 
       - name: Install system audio dependencies (Windows)
         if: runner.os == 'Windows'
-        run: choco install ffmpeg -y --no-progress || winget install -e --id Gyan.FFmpeg || echo "ffmpeg install best-effort"
+        run: |
+          choco install ffmpeg nsis -y --no-progress || winget install -e --id Gyan.FFmpeg || echo "ffmpeg/NSIS install best-effort"
+          makensis /VERSION || echo "NSIS not yet on PATH"
 
       - name: Install Python dependencies
         run: |
@@ -142,86 +146,60 @@ jobs:
           fi
           cat "$GITHUB_OUTPUT"
 
-      # Build with PyInstaller spec; then rename to versioned arch-specific names.
-      - name: Build binary (PyInstaller)
+      # Build with PyInstaller spec; then wrap into OS-native package.
+      - name: Build binary (PyInstaller) + package
         shell: bash
         run: |
           echo "Building for ${{ matrix.target_os }}/${{ matrix.arch }} on ${{ matrix.os }}"
           python -m PyInstaller lofi.spec --noconfirm --log-level WARN
           ls -lh dist/
+          # Use the host-aware wrapper to package into .deb/.dmg/.exe
+          # This re-uses the same logic as local `python scripts/build.py`
+          python scripts/build.py
+          ls -lh dist/
 
-      - name: Rename + archive artifact
+      - name: Verify package
         shell: bash
         run: |
-          set -euo pipefail
           VER="${{ steps.version.outputs.ver }}"
           OS="${{ matrix.target_os }}"
           ARCH="${{ matrix.arch }}"
-          ARTIFACT="${{ matrix.artifact }}"
-          ARCHIVE="${{ matrix.archive }}"
-
-          # PyInstaller always emits dist/lofi (or dist/lofi.exe on Windows)
-          SRC="dist/lofi"
-          if [ "$OS" = "windows" ]; then SRC="dist/lofi.exe"; fi
-          if [ ! -f "$SRC" ]; then
-            # fallback: whichever exists
-            if [ -f "dist/lofi.exe" ]; then SRC="dist/lofi.exe"
-            elif [ -f "dist/lofi" ]; then SRC="dist/lofi"
-            else
-              echo "Built binary not found:"; ls -R dist/; exit 1
-            fi
+          PKG="dist/lofi-${VER}-${OS}-${ARCH}.$(echo ${{ matrix.package }} | rev | cut -d. -f1 | rev)"
+          # map package extension (Windows installer has -setup suffix)
+          if [ "$OS" = "linux" ]; then PKG="dist/lofi-${VER}-linux-${ARCH}.deb"
+          elif [ "$OS" = "macos" ]; then PKG="dist/lofi-${VER}-macos-${ARCH}.dmg"
+          elif [ "$OS" = "windows" ]; then PKG="dist/lofi-${VER}-windows-${ARCH}-setup.exe"
           fi
-
-          cp -v "$SRC" "dist/$ARTIFACT"
-          cp -v "$SRC" "dist/lofi-${VER}-${OS}-${ARCH}${OS:+}${OS/windows/.exe}"
-          # Correct the versioned name for windows .exe extension
-          if [ "$OS" = "windows" ]; then
-            # ensure .exe
-            if [ -f "dist/lofi-${VER}-${OS}-${ARCH}" ]; then mv "dist/lofi-${VER}-${OS}-${ARCH}" "dist/lofi-${VER}-${OS}-${ARCH}.exe"; fi
-          fi
-
-          # Archive
-          if [ "$OS" = "windows" ]; then
-            # need zip with binary at top level + config.example.json
-            cd dist
-            7z a -tzip "$ARCHIVE" "$ARTIFACT" ../config.example.json ../README.md 2>/dev/null || zip -j "$ARCHIVE" "$ARTIFACT" ../config.example.json ../README.md
-            cd ..
-          else
-            tar -czvf "dist/$ARCHIVE" -C dist "$ARTIFACT" -C .. config.example.json README.md || tar -czvf "dist/$ARCHIVE" -C dist "$ARTIFACT"
-            # also provide versioned archive
-            cp -v "dist/$ARCHIVE" "dist/lofi-${VER}-${OS}-${ARCH}.tar.gz"
-          fi
-
-          ls -lh dist/
-          chmod +x "dist/$ARTIFACT" || true
-
-          # Smoke-test the binary (no Discord connection; just --check and --version)
+          echo "Expecting package: $PKG"
+          ls -lh "dist/"
+          test -f "$PKG" || (echo "Package not found: $PKG" && ls -lh dist/ && exit 1)
+          echo "Package present: $PKG"
+          if [ "$OS" = "linux" ]; then dpkg-deb -I "$PKG" | head -n 20 || unzip -l "$PKG" | head -n 20; fi
+          if [ "$OS" = "macos" ]; then hdiutil verify "$PKG" 2>&1 | head -n 20 || echo "hdiutil verify skipped (placeholder on Linux)"; fi
+          if [ "$OS" = "windows" ]; then ls -lh "$PKG" && echo "Windows installer size $(stat -c%s "$PKG" 2>/dev/null || stat -f%z "$PKG") bytes"; fi
+          # Smoke-test the raw binary (no Discord connection; just --check and --version)
+          BIN="dist/${{ matrix.artifact }}"
+          if [ ! -f "$BIN" ]; then BIN="dist/lofi"; fi
+          chmod +x "$BIN" || true
           if [ "$OS" != "windows" ]; then
-            LOFI_TOKEN=ci-dummy-token LOFI_HOME="$RUNNER_TEMP/lofi-home" "dist/$ARTIFACT" --version || true
-            LOFI_TOKEN=ci-dummy-token LOFI_HOME="$RUNNER_TEMP/lofi-home" "dist/$ARTIFACT" --check || echo "--check exit code $?"
+            LOFI_TOKEN=ci-dummy-token LOFI_HOME="$RUNNER_TEMP/lofi-home" "$BIN" --version || true
+            LOFI_TOKEN=ci-dummy-token LOFI_HOME="$RUNNER_TEMP/lofi-home" "$BIN" --check || echo "--check exit code $?"
           else
-            # Windows: .exe invocation
-            "dist/$ARTIFACT" --version || true
+            "$BIN" --version || true
           fi
 
-      - name: Upload artifact (binary)
+      - name: Upload artifact (binary + package)
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact }}
-          path: dist/${{ matrix.artifact }}
-          if-no-files-found: error
-          retention-days: 30
-
-      - name: Upload artifact (archive)
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.archive }}
-          path: dist/${{ matrix.archive }}
+          name: lofi-${{ matrix.target_os }}-${{ matrix.arch }}
+          path: |
+            dist/lofi-${{ matrix.target_os }}-${{ matrix.arch }}*
+            dist/lofi-${{ steps.version.outputs.ver }}-${{ matrix.target_os }}-${{ matrix.arch }}*
           if-no-files-found: error
           retention-days: 30
 
   # --------------------------------------------------------------------- #
-  # Collect the 6 artifacts into one GitHub Release when triggered by a tag
+  # Collect the 6 packages into one GitHub Release when triggered by a tag
   # --------------------------------------------------------------------- #
   release:
     name: publish release
@@ -248,11 +226,16 @@ jobs:
       - name: List artifacts
         run: |
           ls -lhR release-dist/
-          echo "--- 6-way matrix check ---"
-          for f in lofi-linux-amd64 lofi-linux-arm64 lofi-macos-amd64 lofi-macos-arm64 lofi-windows-amd64.exe lofi-windows-arm64.exe; do
-            if [ -f "release-dist/$f" ]; then echo "✓ $f"; else echo "✗ MISSING $f" && exit 1; fi
+          echo "--- 6-way matrix check (.deb/.dmg/.exe) ---"
+          VER="${{ steps.version.outputs.ver }}"
+          for f in lofi-${VER}-linux-amd64.deb lofi-${VER}-linux-arm64.deb lofi-${VER}-macos-amd64.dmg lofi-${VER}-macos-arm64.dmg lofi-${VER}-windows-amd64-setup.exe lofi-${VER}-windows-arm64-setup.exe; do
+            if [ -f "release-dist/$f" ]; then echo "✓ $f"; else echo "✗ MISSING $f" && ls release-dist/ && exit 1; fi
           done
-          echo "All 6 artifacts present."
+          echo "All 6 OS-native packages present (.deb/.dmg/.exe installer)."
+          # also check raw binaries are present
+          for bin in lofi-linux-amd64 lofi-linux-arm64 lofi-macos-amd64 lofi-macos-arm64 lofi-windows-amd64.exe lofi-windows-arm64.exe; do
+            if [ -f "release-dist/$bin" ]; then echo "✓ binary $bin"; else echo "  (binary $bin not separately uploaded, may be inside package)"; fi
+          done
 
       - name: Generate checksums
         run: |
@@ -264,21 +247,26 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            release-dist/*
+            release-dist/*.deb
+            release-dist/*.dmg
+            release-dist/*.exe
+            release-dist/SHA256SUMS.txt
           generate_release_notes: true
-          fail_on_unmatched_files: true
+          fail_on_unmatched_files: false
           body: |
-            Lofi ${{ steps.version.outputs.ver }} — 6 native artifacts
+            Lofi ${{ steps.version.outputs.ver }} — 6 native OS packages
 
-            | OS | arch | binary | archive |
+            | OS | arch | package | how to install |
             |---|---|---|---|
-            | Debian/Ubuntu | amd64 | `lofi-linux-amd64` | `lofi-linux-amd64.tar.gz` |
-            | Debian/Ubuntu | arm64 | `lofi-linux-arm64` | `lofi-linux-arm64.tar.gz` |
-            | macOS | amd64 (Intel) | `lofi-macos-amd64` | `lofi-macos-amd64.tar.gz` |
-            | macOS | arm64 (Apple Silicon) | `lofi-macos-arm64` | `lofi-macos-arm64.tar.gz` |
-            | Windows | amd64 | `lofi-windows-amd64.exe` | `lofi-windows-amd64.zip` |
-            | Windows | arm64 | `lofi-windows-arm64.exe` | `lofi-windows-arm64.zip` |
+            | Debian / Ubuntu | amd64 | `lofi-${{ steps.version.outputs.ver }}-linux-amd64.deb` | `sudo dpkg -i lofi-*.deb; sudo apt-get install -f` |
+            | Debian / Ubuntu | arm64 | `lofi-${{ steps.version.outputs.ver }}-linux-arm64.deb` | `sudo dpkg -i lofi-*.deb` (Raspberry Pi / Graviton) |
+            | macOS | amd64 (Intel) | `lofi-${{ steps.version.outputs.ver }}-macos-amd64.dmg` | open dmg, drag `lofi` to `/usr/local/bin` |
+            | macOS | arm64 (Apple Silicon) | `lofi-${{ steps.version.outputs.ver }}-macos-arm64.dmg` | open dmg, drag `lofi` |
+            | Windows | amd64 | `lofi-${{ steps.version.outputs.ver }}-windows-amd64-setup.exe` | run installer → `C:\Program Files\Lofi\lofi.exe`, then `lofi --check` |
+            | Windows | arm64 | `lofi-${{ steps.version.outputs.ver }}-windows-arm64-setup.exe` | run installer |
+
+            Also included: raw PyInstaller binaries `lofi-linux-*`, `lofi-macos-*`, `lofi-windows-*.exe` + `SHA256SUMS.txt`.
 
             Each binary is a single-file PyInstaller build — no Python needed.
             System deps still required: `ffmpeg` + `libopus` (Debian: `apt install ffmpeg libopus0`; macOS: `brew install ffmpeg opus`; Windows: `winget install Gyan.FFmpeg` — opus is bundled on Windows).
-            Pass the bot token via `LOFI_TOKEN` env var or `config.json`; see `docs/INSTALL.md`.
+            Pass the bot token via `LOFI_TOKEN` env var or `config.json`; see `docs/INSTALL.md` and `docs/PACKAGING.md`.

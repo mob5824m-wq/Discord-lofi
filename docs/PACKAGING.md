@@ -1,24 +1,38 @@
-# Packaging — 6 native artifacts
+# Packaging — 6 native OS packages
 
 Lofi ships as a single-file native binary — no Python needed on the target machine.
-There are **6 artifacts: 1 arm + 1 native for each OS** (Debian/Linux, macOS, Windows).
+There are **6 packages: 1 arm + 1 native for each OS** — wrapped as OS-native installers:
 
-| OS | arch | binary | archive | runner |
-|---|---|---|---|---|
-| Debian / Ubuntu (`linux`) | **amd64** (native) | `lofi-linux-amd64` | `lofi-linux-amd64.tar.gz` | `ubuntu-22.04` |
-| Debian / Ubuntu (`linux`) | **arm64** | `lofi-linux-arm64` | `lofi-linux-arm64.tar.gz` | `ubuntu-24.04-arm` |
-| macOS | **amd64** (Intel) | `lofi-macos-amd64` | `lofi-macos-amd64.tar.gz` | `macos-13` |
-| macOS | **arm64** (Apple Silicon) | `lofi-macos-arm64` | `lofi-macos-arm64.tar.gz` | `macos-14` |
-| Windows | **amd64** (native) | `lofi-windows-amd64.exe` | `lofi-windows-amd64.zip` | `windows-2022` |
-| Windows | **arm64** | `lofi-windows-arm64.exe` | `lofi-windows-arm64.zip` | `windows-11-arm` |
+| OS | arch | binary (inside) | package | runner | tool |
+|---|---|---|---|---|---|
+| Debian / Ubuntu (`linux`) | **amd64** (native) | `lofi-linux-amd64` | `lofi-1.0.0-linux-amd64.deb` | `ubuntu-22.04` | `dpkg-deb` |
+| Debian / Ubuntu (`linux`) | **arm64** | `lofi-linux-arm64` | `lofi-1.0.0-linux-arm64.deb` | `ubuntu-24.04-arm` | `dpkg-deb` |
+| macOS | **amd64** (Intel) | `lofi-macos-amd64` | `lofi-1.0.0-macos-amd64.dmg` | `macos-13` | `hdiutil` |
+| macOS | **arm64** (Apple Silicon) | `lofi-macos-arm64` | `lofi-1.0.0-macos-arm64.dmg` | `macos-14` | `hdiutil` |
+| Windows | **amd64** (native) | `lofi-windows-amd64.exe` | `lofi-1.0.0-windows-amd64-setup.exe` | `windows-2022` | `NSIS makensis` |
+| Windows | **arm64** | `lofi-windows-arm64.exe` | `lofi-1.0.0-windows-arm64-setup.exe` | `windows-11-arm` | `NSIS makensis` |
 
-Each artifact is a PyInstaller `onefile` build from `lofi.spec`. System deps
+Short names without version are also emitted (`lofi-linux-amd64.deb`, `lofi-macos-arm64.dmg`, `lofi-windows-amd64-setup.exe`) for `latest` downloads.
+
+Each binary is a PyInstaller `onefile` build from `lofi.spec`. System deps
 (`ffmpeg` + `libopus`) remain external — they are `apt`/`brew`/`winget` packages
 so the binary stays ~40–90 MB and avoids LGPL bundling questions. The app probes
 them at startup; `lofi --check` reports what to install.
 
 ```
-LOFI_TOKEN=... ./lofi-linux-amd64 --check   # same flags as bot.py
+# Debian
+sudo dpkg -i lofi-1.0.0-linux-amd64.deb && LOFI_TOKEN=... lofi --check
+# macOS
+open lofi-1.0.0-macos-arm64.dmg  # drag lofi to /usr/local/bin
+LOFI_TOKEN=... /usr/local/bin/lofi --check
+# Windows (installer)
+lofi-1.0.0-windows-amd64-setup.exe  # NSIS installer → C:\Program Files\Lofi\lofi.exe
+lofi --check  # or portable: lofi-windows-amd64.exe --check
+```
+
+Inside each package is the same single-file binary you could also run directly:
+```
+LOFI_TOKEN=... ./lofi-linux-amd64 --check   # raw binary, same flags as bot.py
 LOFI_TOKEN=... ./lofi-macos-arm64
 .\lofi-windows-amd64.exe --check
 ```
@@ -27,29 +41,24 @@ LOFI_TOKEN=... ./lofi-macos-arm64
 
 ## Why 6, and why native runners?
 
-PyInstaller is **not a cross-compiler**. An amd64 host cannot emit an arm64
-binary, and a Linux host cannot emit a macOS `.exe`. The only correct way to
-produce the 6 is to build each on its native CPU/OS. That is why
-`.github/workflows/release.yml` has a 6-entry matrix, each on its native
-GitHub-hosted runner. A script that tries to cross-compile would silently ship
-the wrong architecture.
+PyInstaller **and** OS packagers are **not cross-compilers**. An amd64 Linux host cannot emit an arm64 `.deb`, and a Linux host cannot emit a macOS `.dmg` via `hdiutil` or a Windows `.exe` via `NSIS`. The only correct way is to build + package each on its native CPU/OS. That is why `.github/workflows/release.yml` has a 6-entry matrix, each on its native runner. A script that tries to cross-compile would silently ship the wrong architecture.
 
 For local development you only build the artifact matching *this* host:
 
 ```bash
 python -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt pyinstaller
-python scripts/build.py              # → dist/lofi-<os>-<arch>
+python scripts/build.py              # → dist/lofi-<os>-<arch> + dist/lofi-*.deb/.dmg/.exe
 ./dist/lofi --check                  # or ./dist/lofi-linux-amd64 --check
 ```
 
-To inspect the naming / archive logic without owning all 6 machines:
+To inspect the naming / packaging logic without owning all 6 machines:
 
 ```bash
 make dist-all   # or: python scripts/make_dist_all.py
-# copies the one real binary into all 6 names + 12 archives + SHA256SUMS.txt
-# archives contain EMULATED.txt so you don't ship them by accident
-ls -lh dist/
+# copies the one real binary into all 6 names + 6 packages (.deb/.dmg/.exe) + SHA256SUMS.txt
+# placeholder packages contain EMULATED.txt so you don't ship them by accident
+ls -lh dist/*.deb dist/*.dmg dist/*.exe
 ```
 
 ---
@@ -59,12 +68,15 @@ ls -lh dist/
 ```
 lofi.spec                    PyInstaller spec (datas, hiddenimports, onefile)
 scripts/build.py             host-aware builder: detects os/arch, names artifact,
-                             calls PyInstaller, archives (tar.gz/zip)
-scripts/make_dist_all.py     emulates 6 archives from 1 binary (inspection)
+                             calls PyInstaller, wraps into .deb/.dmg/.exe
+scripts/make_dist_all.py     emulates 6 packages from 1 binary (inspection)
 .github/workflows/release.yml  6-job matrix + GitHub Release publish
 Makefile                     make build / make dist / make dist-all / make check
 docs/PACKAGING.md            this file
-packaging/                   per-OS notes (Debian, macOS, Windows)
+packaging/                   per-OS notes and templates (Debian, macOS, Windows)
+  packaging/debian/            control template, Dockerfile, README
+  packaging/macos/             dmg layout + README
+  packaging/windows/           NSIS installer.nsi + README
 ```
 
 ---
@@ -82,8 +94,10 @@ python scripts/build.py --clean && python scripts/build.py --check
 Outputs in `dist/`:
 
 - `lofi` — un-versioned single file kept for `lofi --check`
-- `lofi-<os>-<arch>[.exe]` and `lofi-<version>-<os>-<arch>[.exe]` — arch-specific copies
-- `lofi-<version>-<os>-<arch>.tar.gz` / `.zip` — release archives (binary + `config.example.json` + `README.md`)
+- `lofi-<os>-<arch>[.exe]` and `lofi-<version>-<os>-<arch>[.exe]` — raw arch-specific binaries
+- `lofi-<version>-<os>-<arch>.deb` / `.dmg` / `.exe` — OS-native packages (binary + `config.example.json` + `README.md` + `EMULATED.txt` when placeholder)
+- short packages without version (`lofi-linux-amd64.deb`, …) for `latest` URL
+- `SHA256SUMS.txt`
 - naming via `python scripts/build.py --name-only` and `--all` to see the matrix
 
 ### Reproducing CI locally (Docker / VM)
@@ -92,17 +106,20 @@ The closest to CI without owning hardware is to build inside the target OS's
 container/VM:
 
 ```bash
-# Linux amd64 — same as CI's ubuntu-22.04
+# Linux amd64 — same as CI's ubuntu-22.04 (real .deb via dpkg-deb)
 docker run --rm -v "$PWD:/app" -w /app python:3.11-slim bash -c "
-  apt-get update && apt-get install -y --no-install-recommends ffmpeg libopus0 \
+  apt-get update && apt-get install -y --no-install-recommends ffmpeg libopus0 dpkg-dev \
   && pip install -r requirements.txt pyinstaller \
-  && python scripts/build.py --clean && ls -lh dist/"
+  && python scripts/build.py --clean && ls -lh dist/*.deb"
 
 # Linux arm64 — on an amd64 host this still emits amd64 unless you use an arm64 host or QEMU.
 # Use docker buildx with --platform linux/arm64 on an arm64 machine or with QEMU enabled:
 docker buildx build --platform linux/arm64 -f packaging/debian/Dockerfile .
 
 # macOS / Windows: must be on that OS. No reliable cross.
+# On those runners `hdiutil` (mac) and `makensis` (Windows NSIS) are used to produce
+# real .dmg (UDZO) and .exe (PE installer). On Linux they fall back to placeholder
+# archives with correct extensions and EMULATED.txt; CI replaces them with real ones.
 ```
 
 ---
@@ -119,76 +136,112 @@ git tag v1.0.1 && git push origin v1.0.1
 Flow:
 
 1. `build` job: 6 parallel runs, each installs system deps, `pip install pyinstaller`,
-   `pyinstaller lofi.spec`, renames to `lofi-<os>-<arch>` and archives.
-2. Each job uploads its binary + archive with `actions/upload-artifact`.
-3. `release` job (only on tag) downloads all 6, verifies that every name is present,
-   generates `SHA256SUMS.txt`, and publishes a GitHub Release with
-   `softprops/action-gh-release`.
+   `pyinstaller lofi.spec`, then `python scripts/build.py` which wraps the binary into the OS-native package:
+   - Linux: `dpkg-deb --build` → `lofi-*.deb` (with `DEBIAN/control` + `usr/local/bin/lofi`)
+   - macOS: `hdiutil create -format UDZO` → `lofi-*.dmg` (volume `Lofi <ver>`)
+   - Windows: `makensis` (NSIS) → `lofi-*.exe` installer (PE, installs to `Program Files\Lofi`)
+2. Each job uploads its binary + package with `actions/upload-artifact`.
+3. `release` job (only on tag) downloads all 6, verifies that every package exists
+   (`lofi-*.deb`, `lofi-*.dmg`, `lofi-*.exe`), generates `SHA256SUMS.txt`, and publishes a GitHub Release.
 
 Artifacts are also available as workflow artifacts on non-tag pushes for testing.
 
 ### Runner image retirement
 
 If GitHub retires e.g. `macos-13`, replace it with the nearest equivalent
-(`macos-13-large`, `macos-14`, etc.) — artifact names stay `lofi-macos-amd64` etc.
+(`macos-13-large`, `macos-14`, etc.) — artifact names stay `lofi-macos-amd64.dmg` etc.
 The version is the only stable identifier downstream should parse.
 
 ---
 
 ## Per-OS details
 
-### Debian / Ubuntu
+### Debian / Ubuntu — .deb
 
 - System deps: `sudo apt install ffmpeg libopus0` (or `imageio-ffmpeg` pip fallback).
 - Binary is dynamically linked against `libopus.so.0` — the usual multiarch path.
   `paths.opus_library()` probes `LD_LIBRARY_PATH`, multiarch dirs, and `LOFI_OPUS`.
-- Archive: `tar.gz` with executable bit `0755`. To install:
-  ```bash
-  tar -xzf lofi-1.0.0-linux-amd64.tar.gz
-  sudo install -m 0755 lofi-linux-amd64 /usr/local/bin/lofi
-  lofi --check
+- Package: `dpkg-deb` with layout:
+
   ```
-- `.deb` packaging is intentionally not provided — single-file + tarball covers
-  servers and `install`-based deploys without needing `dpkg` dependencies.
+  lofi_1.0.0_amd64.deb
+  ├── DEBIAN/control  (Package, Version, Architecture, Depends: ffmpeg, libopus0)
+  ├── DEBIAN/postinst (hint: LOFI_TOKEN=... lofi --check)
+  └── usr/local/bin/lofi
+  └── usr/share/doc/lofi/{README.md,config.example.json}
+  ```
 
-See `packaging/debian/`.
+  Install:
 
-### macOS
+  ```bash
+  sudo dpkg -i lofi-1.0.0-linux-amd64.deb
+  sudo apt-get install -f -y   # pull missing Depends if any
+  lofi --check
+  # arm64 same: lofi-1.0.0-linux-arm64.deb on Raspberry Pi OS / Graviton
+  ```
+
+  `dpkg-deb -I lofi-*.deb` and `dpkg -L lofi` show contents. Uninstall: `sudo apt remove lofi`.
+
+See `packaging/debian/` (Dockerfile, control template, README).
+
+### macOS — .dmg
 
 - System deps: `brew install ffmpeg opus`.
+- Binary is inside an UDZO-compressed dmg created with `hdiutil`:
+
+  ```
+  Lofi 1.0.0.dmg  (volname "Lofi 1.0.0 amd64/arm64")
+  └── Lofi/
+      ├── lofi  (755)
+      ├── README.md
+      ├── config.example.json
+      └── ReadMe.txt
+  ```
+
+  Open in Finder, drag `lofi` to `/usr/local/bin` or `~/bin`, then `LOFI_TOKEN=... lofi --check`.
+
 - Binaries are not code-signed in CI — Gatekeeper will warn on first open.
   Ad-hoc sign locally: `codesign -s - dist/lofi-macos-arm64`.
-  For distribution signing, set `CODESIGN_IDENTITY` and `APPLE_TEAM_ID` secrets
-  and extend the macOS build step with `codesign --deep --force`.
-- Universal2 (`amd64+arm64` lipo) is not produced — two separate artifacts are
-  smaller and cache better. Users pick the one matching `uname -m`.
+  For distribution signing, set `CODESIGN_IDENTITY` and extend macOS build with `codesign`.
+- Universal2 (`amd64+arm64` lipo) is not produced — two separate dmgs are smaller.
+  Pick the one matching `uname -m`.
 
 See `packaging/macos/`.
 
-### Windows
+### Windows — .exe installer (NSIS)
 
 - System deps: `winget install Gyan.FFmpeg` (opus is bundled via `discord.py[voice]`).
   If `--check` reports libopus missing, drop `libopus-0.dll` next to the `.exe`.
-- Archive: `.zip` with the `.exe` flat. No installer — unzip and run:
-  ```powershell
-  Expand-Archive lofi-1.0.0-windows-amd64.zip -DestinationPath .
-  .\lofi-windows-amd64.exe --check
-  ```
-- For an MSI/InnoSetup installer, wrap the `.exe` — not provided here because
-  most Windows deployments of this bot run in WSL2/Linux containers.
+- Package: NSIS installer `.exe` (PE) built with `makensis`:
 
-See `packaging/windows/`.
+  ```
+  lofi-1.0.0-windows-amd64-setup.exe  (installer)
+  → C:\Program Files\Lofi\lofi.exe
+  + uninstall.exe + README.md + config.example.json
+  + registry Uninstall key
+  ```
+
+  Run the installer, then `lofi --check` from Start Menu or `C:\Program Files\Lofi`.
+
+- No-zip fallback: unzip is not needed — the `.exe` is the installer. For portable
+  use, the raw `lofi-windows-amd64.exe` binary (inside `dist/`) also works as a standalone.
+
+- On Linux, placeholder `.exe` is a zip with `.exe` extension + `EMULATED.txt`; CI on
+  `windows-2022` / `windows-11-arm` replaces it with a real NSIS PE.
+
+See `packaging/windows/` (NSIS `installer.nsi` + README).
 
 ---
 
 ## Versioning and naming
 
 - Source of truth: `VERSION` file.
-- Local builds embed it in archive names: `lofi-<version>-<os>-<arch>.tar.gz`.
-- Plain names without version (`lofi-linux-amd64`) are also emitted for
-  `curl -LO .../latest/download/lofi-linux-amd64` style installs.
+- Local builds embed it in package names: `lofi-<version>-<os>-<arch>.deb/.dmg/.exe`.
+- Plain names without version (`lofi-linux-amd64.deb`, …) are also emitted for
+  `curl -LO .../latest/download/lofi-linux-amd64.deb` style installs.
 - The binary's `--version` prints the same string (`paths.app_version()` reads
   `VERSION` via `resource_path` — bundled in PyInstaller datas).
+- Raw binaries (`lofi-linux-amd64`) and packages (`lofi-1.0.0-linux-amd64.deb`) share the same `VERSION`; `SHA256SUMS.txt` covers both.
 
 ---
 
@@ -198,16 +251,18 @@ See `packaging/windows/`.
 |---|---|---|
 | `PYINSTALLER not found` | not installed in this venv | `pip install pyinstaller` |
 | Binary is wrong arch | cross-compile attempted | build on native runner; see matrix |
-| `ffmpeg was not found` from built binary | system ffmpeg missing | install per-OS deps above, or `pip install imageio-ffmpeg` |
-| `Could not find opus library` | libopus missing | `apt install libopus0` / `brew install opus` / drop `libopus-0.dll` next to `.exe` |
-| macOS Gatekeeper blocks | unsigned binary | `xattr -dr com.apple.quarantine dist/lofi-macos-*` or ad-hoc `codesign -s -` |
-| `EMULATED.txt` in archive | archive came from `make dist-all` | rebuild that OS/arch natively; emulated archives are not release-grade |
+| `dpkg-deb: not found` / `hdiutil` missing / `makensis` missing | OS mismatch or tool not installed | On Linux install `dpkg-dev`; macOS has `hdiutil`; Windows install NSIS via `choco install nsis`; CI installs them |
+| `ffmpeg was not found` from installed package | system ffmpeg missing | install per-OS deps above, or `pip install imageio-ffmpeg` |
+| `Could not find opus library` | libopus missing | `apt install libopus0` / `brew install opus` / drop `libopus-0.dll` |
+| macOS Gatekeeper blocks | unsigned dmg/binary | `xattr -dr com.apple.quarantine dist/*.dmg` or `codesign -s -` |
+| `EMULATED.txt` in package | package came from `make dist-all` on wrong OS | rebuild that OS/arch natively; emulated packages are not release-grade |
+| `dpkg -i` complains about Depends | ffmpeg/libopus not installed | `sudo apt-get install -f` after `dpkg -i` |
 
 ---
 
 ## Security notes
 
-- Binaries contain no token — pass `LOFI_TOKEN` at runtime.
+- Binaries and packages contain no token — pass `LOFI_TOKEN` at runtime.
 - `config.json` is written to `LOFI_HOME` / platform state dir with `0600`, never bundled.
-- The dashboard bind defaults to `127.0.0.1` even in the binary; exposing it is
-  an explicit config step.
+- The dashboard bind defaults to `127.0.0.1` even in the installed package; exposing it is explicit.
+

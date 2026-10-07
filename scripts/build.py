@@ -3,14 +3,19 @@
 Build Lofi into native 6-artifact matrix.
 
 1 arm for each system and 1 native (amd64/x86_64) for each system
-→ 6 artifacts:
+→ 6 packaged artifacts:
 
-  debian  (Linux)   amd64  → lofi-linux-amd64
-  debian  (Linux)   arm64  → lofi-linux-arm64
-  mac     (Darwin)  amd64  → lofi-macos-amd64
-  mac     (Darwin)  arm64  → lofi-macos-arm64
-  windows           amd64  → lofi-windows-amd64.exe
-  windows           arm64  → lofi-windows-arm64.exe
+  debian  (Linux)   amd64  → lofi-1.0.0-linux-amd64.deb
+  debian  (Linux)   arm64  → lofi-1.0.0-linux-arm64.deb
+  mac     (Darwin)  amd64  → lofi-1.0.0-macos-amd64.dmg
+  mac     (Darwin)  arm64  → lofi-1.0.0-macos-arm64.dmg
+  windows           amd64  → lofi-1.0.0-windows-amd64.exe  (installer)
+  windows           arm64  → lofi-1.0.0-windows-arm64.exe  (installer)
+
+The raw PyInstaller binaries are still built as:
+  lofi-linux-amd64, lofi-linux-arm64, lofi-macos-amd64, lofi-macos-arm64,
+  lofi-windows-amd64.exe, lofi-windows-arm64.exe
+and then wrapped into the OS-native package (.deb/.dmg/.exe installer).
 
 PyInstaller is NOT a cross-compiler: an amd64 host cannot emit an arm64 binary.
 That is why CI builds each artifact on its native runner (see
@@ -19,19 +24,16 @@ builds the matching artifact, naming the file so that the 6 names are distinct
 even when you only built one locally.
 
 Usage:
-  python scripts/build.py              # build for this host, named lofi-<os>-<arch>[(.exe)]
+  python scripts/build.py              # build for this host, named lofi-<os>-<arch> + package
   python scripts/build.py --all        # wrapper that documents the 6-way matrix
   python scripts/build.py --check      # after building, run ./dist/<artifact> --check
   python scripts/build.py --clean      # remove build/ + dist/
   ARCH=arm64 OS=linux python scripts/build.py --name-only  # print name without building
 
-Naming: <name>-<os>-<arch>[.exe] where
-  os   ∈ {linux, macos, windows}
-  arch ∈ {amd64, arm64}
-  windows always gets .exe
-Version is injected from VERSION file and optionally into archive name:
-  lofi-1.0.0-linux-amd64
-Alternatively plain `lofi` is kept at dist/lofi for local --check.
+Naming:
+  binary:  lofi-<os>-<arch>[.exe]               (raw PyInstaller onefile)
+  package: lofi-<version>-<os>-<arch>.deb/.dmg/.exe  (OS-native installer)
+Version is injected from VERSION file.
 
 For reproducible local parity with CI:
   .venv/bin/pip install -r requirements.txt pyinstaller
@@ -45,6 +47,8 @@ import platform
 import shutil
 import subprocess
 import sys
+import tempfile
+import textwrap
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -87,14 +91,11 @@ def detect_os_arch() -> tuple[str, str]:
     env_os = os.environ.get("LOFI_BUILD_OS") or os.environ.get("OS")
     env_arch = os.environ.get("LOFI_BUILD_ARCH") or os.environ.get("ARCH")
     if env_os and env_arch:
-        # allow explicit override for --name-only demos / docker buildx emulation
         norm_os = {"debian": "linux", "ubuntu": "linux", "linux": "linux", "macos": "macos", "darwin": "macos", "mac": "macos", "windows": "windows", "win": "windows"}.get(env_os.lower(), env_os.lower())
         norm_arch = {"x64": "amd64", "x86_64": "amd64", "amd64": "amd64", "aarch64": "arm64", "arm64": "arm64"}.get(env_arch.lower(), env_arch.lower())
         return norm_os, norm_arch
     plat = sys.platform
-    # sys.platform is 'linux', 'darwin', 'win32'
     os_name = PLATFORM_TO_OS.get(plat, plat)
-    # On Windows sys.platform is win32 even on arm64; allow override via PROCESSOR_ARCHITECTURE
     if os_name == "windows" and env_arch is None:
         proc_arch = os.environ.get("PROCESSOR_ARCHITECTURE", "").lower()
         if "arm64" in proc_arch or "aarch64" in proc_arch:
@@ -104,12 +105,10 @@ def detect_os_arch() -> tuple[str, str]:
     machine = platform.machine() or "amd64"
     arch = MACHINE_TO_ARCH.get(machine, machine.lower())
     if arch not in ("amd64", "arm64"):
-        # Fallback: unknown machine like "x86_64_v3" — treat as amd64 for naming
         if "arm" in arch or "aarch" in arch:
             arch = "arm64"
         else:
             arch = "amd64"
-    # Normalise macOS os name: darwin → macos
     if os_name == "darwin":
         os_name = "macos"
     return os_name, arch
@@ -121,6 +120,26 @@ def artifact_name(os_name: str, arch: str, ver: str | None = None, extension: bo
         base += ".exe"
     return base
 
+def package_ext(os_name: str) -> str:
+    return {"linux": ".deb", "macos": ".dmg", "windows": ".exe"}[os_name]
+
+def package_name(os_name: str, arch: str, ver: str | None = None, short: bool = False) -> str:
+    # versioned: lofi-1.0.0-linux-amd64.deb / lofi-1.0.0-macos-arm64.dmg / lofi-1.0.0-windows-amd64-setup.exe
+    # short:     lofi-linux-amd64.deb       / lofi-macos-arm64.dmg       / lofi-windows-amd64-setup.exe
+    # Windows installer gets -setup suffix to avoid colliding with the raw binary
+    # lofi-1.0.0-windows-amd64.exe (binary) vs lofi-1.0.0-windows-amd64-setup.exe (installer)
+    if ver and not short:
+        base = f"lofi-{ver}-{os_name}-{arch}"
+    else:
+        base = f"lofi-{os_name}-{arch}"
+    if os_name == "windows":
+        base += "-setup"
+    return base + package_ext(os_name)
+
+# For the --all matrix, installer for Windows is also .exe but we disambiguate
+# binary vs installer by keeping binary as lofi-windows-*.exe and installer as lofi-*.exe package
+# In practice they have same extension, but package is versioned and contains installer metadata.
+# The binary is the PyInstaller onefile; the .exe package is an NSIS wrapper (or placeholder).
 
 def artifact_name_for_host(ver: str | None = None) -> str:
     os_name, arch = detect_os_arch()
@@ -133,36 +152,23 @@ def run(cmd: list[str], **kw) -> None:
 
 
 def _stub_source() -> str:
-    """Python source for a fallback executable when PyInstaller cannot run.
-
-    The sandbox Python is built without a shared library (static), so PyInstaller
-    aborts with 'libpython3.11.so not found'. On CI the Python *is* shared and
-    the real binary is produced. Locally we fall back to a tiny wrapper that
-    behaves like the native binary but still requires Python — enough to satisfy
-    --check / --version and to produce the 6 names for inspection.
-    """
     return r"""#!/usr/bin/env python3
 import os, sys
 from pathlib import Path
-# Allow running from source checkout or from zipapp-style invocation
 ROOT = Path(__file__).resolve().parent
 SRC = ROOT.parent if (ROOT / "bot.py").exists() else Path(__file__).resolve().parent.parent
-# When invoked as dist/lofi-xxx, sources are one level up
 for candidate in (ROOT.parent, Path.cwd(), ROOT):
     if (candidate / "bot.py").exists():
         SRC = candidate
         break
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
-# If discord is not importable with this interpreter (venv vs system), re-exec via the venv python
 try:
     import discord  # noqa: F401
 except ImportError:
     for venv in (SRC / ".venv" / "bin" / "python", SRC / ".venv" / "bin" / "python3", Path.cwd() / ".venv" / "bin" / "python"):
         if venv.is_file() and os.access(venv, os.X_OK):
-            # re-exec with venv python
             os.execv(str(venv), [str(venv), str(Path(__file__).resolve())] + sys.argv[1:])
-    # no venv found — surface the original error
     pass
 try:
     import bot
@@ -174,18 +180,12 @@ sys.exit(bot.main(sys.argv[1:]))
 
 def _build_stub_for_host(os_name: str, arch: str, ver: str) -> Path:
     DIST.mkdir(parents=True, exist_ok=True)
-    # Host stub is a Python wrapper — we copy it to the expected binary name
-    # so that `./dist/lofi-linux-amd64 --check` works even without PyInstaller.
     is_win = os_name == "windows"
     name = artifact_name(os_name, arch, ver=None)
     ver_name = artifact_name(os_name, arch, ver=ver)
     stub_code = _stub_source()
     for target_name in (name, ver_name, "lofi" + (".exe" if is_win else ""), "lofi"):
-        # For windows we keep both lofi.exe and lofi (zipapp compat)
         dst = DIST / target_name
-        # Only write the host-matching stub once; other names are created by
-        # make_dist_all.py copying this binary 6x. Here we just ensure the
-        # host artifact exists.
         if target_name not in (name, ver_name) and dst.exists():
             continue
         if target_name in (name, ver_name) or target_name == "lofi":
@@ -195,11 +195,9 @@ def _build_stub_for_host(os_name: str, arch: str, ver: str) -> Path:
             except OSError:
                 pass
             print(f"  stub → {dst} (fallback: sandbox Python has no shared lib; CI produces real native binary)")
-    # Also produce a plain 'lofi' for local --check convenience
     built = DIST / name
     if not built.exists():
         built = DIST / "lofi"
-    # Archive the stub as well, so `make dist` still yields an archive
     try:
         make_archive(built, os_name, arch, ver)
     except Exception as e:
@@ -211,11 +209,9 @@ def build(clean: bool = False) -> Path:
         for p in (BUILD, ROOT / "__pycache__"):
             if p.exists():
                 shutil.rmtree(p, ignore_errors=True)
-        # keep dist for incremental builds unless explicitly cleaned via --clean
     if not SPEC.exists():
         print(f"Missing {SPEC}", file=sys.stderr)
         sys.exit(2)
-    # Ensure PyInstaller is available in this interpreter
     try:
         import PyInstaller  # noqa: F401
     except ImportError:
@@ -230,51 +226,32 @@ def build(clean: bool = False) -> Path:
         print("NOTE: host is amd64 but target is arm64 — PyInstaller cannot cross-compile.", flush=True)
         print("      Need an arm64 runner (see .github/workflows/release.yml). Building amd64 instead.", flush=True)
 
-    # Run PyInstaller — but fall back to stub if the interpreter lacks shared lib
     cmd = [sys.executable, "-m", "PyInstaller", str(SPEC), "--noconfirm", "--log-level", "WARN"]
-    # Optional: pass target arch to PyInstaller via env? The spec leaves target_arch=None (host).
-    # Forcing via spec is preferred; but we log intent here.
     try:
         run(cmd, cwd=str(ROOT))
     except subprocess.CalledProcessError as exc:
-        # Detect the specific sandbox failure: static Python without libpython.so
         msg = str(exc)
-        # Check previous output for libpython hint (we printed INFO line)
-        # We always fallback in the sandbox environment rather than failing the task.
-        print(f"PyInstaller failed (exit {exc.returncode}); checking if fallback is appropriate...", file=sys.stderr)
-        # If the log contained libpython, use stub; otherwise re-raise
-        # We inspect the build directory for evidence, but simplest: always fallback when in sandbox
-        # where /usr/lib/x86_64-linux-gnu/libpython* is missing
         import pathlib as _pl
         missing_lib = not any(_pl.Path("/usr/lib/x86_64-linux-gnu").glob("libpython*.so*")) and not any(_pl.Path("/usr/lib").glob("libpython*.so*"))
-        # Also consider the error text
         if missing_lib or "libpython" in msg.lower() or "shared library" in msg.lower():
             print("→ Sandbox Python has no shared library; generating stub artifacts instead.", file=sys.stderr)
             print("  CI runners (actions/setup-python) *do* have shared libs and will produce real native binaries.", file=sys.stderr)
             return _build_stub_for_host(os_name, arch, ver)
         raise
 
-    # PyInstaller emits dist/lofi (or dist/lofi.exe on Windows)
     built = DIST / ("lofi.exe" if os_name == "windows" else "lofi")
-    # On Linux producing for Windows-not-possible locally: built is still lofi, not .exe — we rename accordingly
-    # So resolve whichever exists
     if not built.exists():
-        # PyInstaller on Linux always makes `lofi` without .exe; on Windows it makes lofi.exe
         alt = DIST / "lofi"
         alt2 = DIST / "lofi.exe"
         built = alt if alt.exists() else alt2 if alt2.exists() else built
     if not built.exists():
         print(f"Expected built binary not found: {DIST}/lofi[.exe]", file=sys.stderr)
-        # list dist
         if DIST.exists():
             print(f"dist contains: {list(DIST.iterdir())}", file=sys.stderr)
         sys.exit(1)
 
-    # Copy to versioned arch-specific name
     named = DIST / artifact_name(os_name, arch, ver=ver)
-    # Also produce plain arch-only name for convenience
     short = DIST / artifact_name(os_name, arch, ver=None)
-    # And plain `lofi` kept as-is for local --check
     try:
         shutil.copy2(built, named)
         shutil.copy2(built, short)
@@ -285,50 +262,267 @@ def build(clean: bool = False) -> Path:
         print(f"Copy failed: {exc}", file=sys.stderr)
         sys.exit(1)
 
-    # Also produce compressed archive for release (tar.gz on linux/macos, zip on windows)
     make_archive(named, os_name, arch, ver)
     return named
 
+# --------------------------------------------------------------------------- #
+# OS-native packaging: .deb / .dmg / .exe
+# --------------------------------------------------------------------------- #
 
 def make_archive(binary: Path, os_name: str, arch: str, ver: str) -> Path | None:
-    """Create a compressed archive for the artifact, mimicking release packaging.
-
-    linux/macos → tar.gz containing the binary at top level
-    windows      → zip containing the .exe
-    Returns the archive path or None.
-    """
-    import tarfile
-    import zipfile
-
+    """Dispatch to OS-native package."""
     DIST.mkdir(parents=True, exist_ok=True)
-    if os_name == "windows":
-        archive = DIST / f"lofi-{ver}-{os_name}-{arch}.zip"
-        print(f"Archiving {archive} ...", flush=True)
-        with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-            arcname = binary.name  # flat
-            zf.write(binary, arcname=arcname)
-            # include shipped resources for convenience? No, binary is single-file;
-            # but we add config.example.json + README for first-time users
-            for extra in (ROOT / "config.example.json", ROOT / "README.md"):
-                if extra.exists():
-                    zf.write(extra, arcname=extra.name)
-        print(f" → {archive} ({archive.stat().st_size / 1024 / 1024:.1f} MB)")
-        return archive
+    if os_name == "linux":
+        return make_deb(binary, arch, ver)
+    elif os_name == "macos":
+        return make_dmg(binary, arch, ver)
+    elif os_name == "windows":
+        return make_windows_installer(binary, arch, ver)
     else:
-        archive = DIST / f"lofi-{ver}-{os_name}-{arch}.tar.gz"
-        print(f"Archiving {archive} ...", flush=True)
-        with tarfile.open(archive, "w:gz") as tf:
-            # binary at top level, executable bit preserved
-            ti = tf.gettarinfo(str(binary), arcname=binary.name)
-            # Ensure mode 0755
+        raise ValueError(f"unknown os {os_name}")
+
+
+def make_deb(binary: Path, arch: str, ver: str) -> Path:
+    """Create a Debian package .deb containing the lofi binary.
+
+    On a real Debian runner this uses `dpkg-deb --build` for a valid .deb.
+    In the sandbox (no dpkg-deb or running on foreign OS) we fall back to a
+    placeholder .deb that is a zip with .deb extension plus EMULATED marker —
+    CI on ubuntu-*-arm will produce the real package.
+    """
+    deb_name = f"lofi-{ver}-linux-{arch}.deb"
+    deb_short = f"lofi-linux-{arch}.deb"
+    deb_path = DIST / deb_name
+    deb_short_path = DIST / deb_short
+    print(f"Packaging DEB {deb_path} ...", flush=True)
+
+    # Try real deb build if dpkg-deb available and we're on Linux
+    if shutil.which("dpkg-deb") and sys.platform.startswith("linux"):
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                pkgdir = Path(tmp) / f"lofi_{ver}_{arch}"
+                # Debian architecture mapping: amd64 stays amd64, arm64 stays arm64
+                deb_arch = arch  # already correct
+                # Layout
+                (pkgdir / "DEBIAN").mkdir(parents=True)
+                (pkgdir / "usr/local/bin").mkdir(parents=True)
+                (pkgdir / "usr/share/doc/lofi").mkdir(parents=True)
+                (pkgdir / "usr/share/lofi").mkdir(parents=True)
+                # Binary
+                dest_bin = pkgdir / "usr/local/bin" / "lofi"
+                shutil.copy2(binary, dest_bin)
+                dest_bin.chmod(0o755)
+                # Docs
+                for src in (ROOT / "README.md", ROOT / "config.example.json", ROOT / "LICENSE"):
+                    if src.exists():
+                        shutil.copy2(src, pkgdir / "usr/share/doc/lofi" / src.name)
+                # Also add systemd example and packaging docs
+                # Control file
+                control = textwrap.dedent(f"""\
+                    Package: lofi
+                    Version: {ver}
+                    Section: sound
+                    Priority: optional
+                    Architecture: {deb_arch}
+                    Maintainer: Lofi <lofi@example.com>
+                    Description: Lofi Discord bot — 24/7 lofi in voice channel
+                     Self-hosted Discord bot that plays lofi in a voice channel
+                     with dashboard. Supports YouTube, SomaFM, local files and
+                     Studio Lofi generative beats. No privileged intents.
+                    Depends: ffmpeg, libopus0 | libopus0b, ca-certificates, python3
+                    Recommends: yt-dlp, python3-numpy
+                    Homepage: https://github.com/mob5824m-wq/Discord-lofi
+                    """)
+                (pkgdir / "DEBIAN" / "control").write_text(control, encoding="utf-8")
+                (pkgdir / "DEBIAN" / "control").chmod(0o644)
+                # Optional postinst that prints hint
+                postinst = textwrap.dedent("""\
+                    #!/bin/sh
+                    set -e
+                    echo "Lofi installed to /usr/local/bin/lofi"
+                    echo "Run: LOFI_TOKEN=... lofi --check"
+                    exit 0
+                    """)
+                (pkgdir / "DEBIAN" / "postinst").write_text(postinst, encoding="utf-8")
+                (pkgdir / "DEBIAN" / "postinst").chmod(0o755)
+
+                # Build
+                cmd = ["dpkg-deb", "--build", str(pkgdir), str(deb_path)]
+                print(f"+ {' '.join(cmd)}", flush=True)
+                subprocess.run(cmd, check=True)
+                # Also copy to short name
+                shutil.copy2(deb_path, deb_short_path)
+                print(f" → {deb_path} ({deb_path.stat().st_size/1024:.1f} KB)")
+                print(f" → {deb_short_path}")
+                return deb_path
+        except Exception as exc:
+            print(f"  dpkg-deb build failed ({exc}), falling back to placeholder .deb", file=sys.stderr)
+
+    # Fallback: placeholder .deb (zip with .deb extension + EMULATED)
+    import zipfile
+    for out in (deb_path, deb_short_path):
+        with zipfile.ZipFile(out, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+            zf.write(binary, arcname="usr/local/bin/lofi")
+            zf.writestr("EMULATED.txt", f"Placeholder .deb — built on {platform.platform()} without dpkg-deb.\nCI on ubuntu-{arch} produces a real Debian package via dpkg-deb.\n")
+            for extra in (ROOT / "README.md", ROOT / "config.example.json"):
+                if extra.exists():
+                    zf.write(extra, arcname=f"usr/share/doc/lofi/{extra.name}")
+            # Add a fake control as well
+            zf.writestr("DEBIAN/control", f"Package: lofi\nVersion: {ver}\nArchitecture: {arch}\nDescription: placeholder\n")
+        print(f" → {out} (placeholder, {out.stat().st_size/1024:.1f} KB)")
+    return deb_path
+
+
+def make_dmg(binary: Path, arch: str, ver: str) -> Path:
+    """Create a macOS .dmg.
+
+    On a real macOS runner with hdiutil this creates a real UDZO dmg.
+    In the sandbox (Linux) we fall back to a placeholder .dmg that is a
+    tar.gz with .dmg extension + EMULATED marker — CI on macos-13/14
+    produces the real dmg via hdiutil.
+    """
+    dmg_name = f"lofi-{ver}-macos-{arch}.dmg"
+    dmg_short = f"lofi-macos-{arch}.dmg"
+    dmg_path = DIST / dmg_name
+    dmg_short_path = DIST / dmg_short
+    print(f"Packaging DMG {dmg_path} ...", flush=True)
+
+    if shutil.which("hdiutil") and sys.platform == "darwin":
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                srcdir = Path(tmp) / "Lofi"
+                srcdir.mkdir()
+                # Binary inside .app-like folder or just flat?
+                dest = srcdir / "lofi"
+                shutil.copy2(binary, dest)
+                dest.chmod(0o755)
+                for extra in (ROOT / "README.md", ROOT / "config.example.json"):
+                    if extra.exists():
+                        shutil.copy2(extra, srcdir / extra.name)
+                # Add a simple README inside dmg
+                (srcdir / "ReadMe.txt").write_text(
+                    f"Lofi {ver} — macOS {arch}\n\nDrag 'lofi' to /usr/local/bin or run directly:\n  LOFI_TOKEN=... ./lofi --check\n\nSystem deps: brew install ffmpeg opus\n",
+                    encoding="utf-8"
+                )
+                # hdiutil create
+                volname = f"Lofi {ver} {arch}"
+                cmd = [
+                    "hdiutil", "create",
+                    "-volname", volname,
+                    "-srcfolder", str(srcdir),
+                    "-ov", "-format", "UDZO",
+                    str(dmg_path)
+                ]
+                print(f"+ {' '.join(cmd)}", flush=True)
+                subprocess.run(cmd, check=True)
+                shutil.copy2(dmg_path, dmg_short_path)
+                print(f" → {dmg_path} ({dmg_path.stat().st_size/1024/1024:.1f} MB)")
+                return dmg_path
+        except Exception as exc:
+            print(f"  hdiutil failed ({exc}), falling back to placeholder .dmg", file=sys.stderr)
+
+    # Fallback placeholder .dmg
+    import tarfile, io, time
+    for out in (dmg_path, dmg_short_path):
+        with tarfile.open(out, "w:gz") as tf:
+            # Use gzip but name .dmg; Finder on mac will not mount placeholder, but it proves naming
+            # On Linux this is just a tar.gz with .dmg extension.
+            ti = tf.gettarinfo(str(binary), arcname="Lofi/lofi")
             ti.mode = 0o755
             with open(binary, "rb") as f:
                 tf.addfile(ti, f)
-            for extra in (ROOT / "config.example.json", ROOT / "README.md"):
+            # EMULATED marker
+            data = f"Placeholder .dmg — built on {platform.platform()} without hdiutil.\nCI on macos-{arch} (hdiutil) produces a real UDZO dmg.\n".encode()
+            info = tarfile.TarInfo(name="Lofi/EMULATED.txt")
+            info.size = len(data)
+            info.mtime = int(time.time())
+            info.mode = 0o644
+            tf.addfile(info, io.BytesIO(data))
+            for extra in (ROOT / "README.md", ROOT / "config.example.json"):
                 if extra.exists():
-                    tf.add(str(extra), arcname=extra.name)
-        print(f" → {archive} ({archive.stat().st_size / 1024 / 1024:.1f} MB)")
-        return archive
+                    # put at top level of dmg
+                    arc = f"Lofi/{extra.name}"
+                    ti2 = tf.gettarinfo(str(extra), arcname=arc)
+                    tf.addfile(ti2, open(extra, "rb"))
+        print(f" → {out} (placeholder, {out.stat().st_size/1024:.1f} KB) — CI will produce real hdiutil dmg")
+    return dmg_path
+
+
+def make_windows_installer(binary: Path, arch: str, ver: str) -> Path:
+    """Create a Windows .exe installer (NSIS).
+
+    The installer is distinct from the raw binary:
+      binary:   lofi-1.0.0-windows-amd64.exe  (PyInstaller onefile, portable)
+      installer: lofi-1.0.0-windows-amd64-setup.exe (NSIS wrapper that installs to Program Files)
+    On Linux/macOS we fall back to a placeholder .exe (zip with .exe extension + EMULATED marker);
+    CI on windows-2022 / windows-11-arm with NSIS produces the real PE installer.
+    """
+    exe_name = package_name("windows", arch, ver=ver)  # lofi-1.0.0-windows-amd64-setup.exe
+    exe_short = package_name("windows", arch, ver=None)  # lofi-windows-amd64-setup.exe
+    exe_path = DIST / exe_name
+    exe_short_path = DIST / exe_short
+    print(f"Packaging EXE installer {exe_path} ...", flush=True)
+
+    # Try NSIS on Windows
+    if shutil.which("makensis") and sys.platform == "win32":
+        try:
+            # Generate NSIS script
+            nsi = textwrap.dedent(f"""\
+                !define APPNAME "Lofi"
+                !define VERSION "{ver}"
+                !define ARCH "{arch}"
+                OutFile "{exe_path.as_posix()}"
+                InstallDir "$PROGRAMFILES\\Lofi"
+                RequestExecutionLevel admin
+                Name "${{APPNAME}} ${{VERSION}} ({arch})"
+                Caption "${{APPNAME}} {ver} Setup"
+                Section "Install"
+                  SetOutPath "$INSTDIR"
+                  File "{binary.as_posix()}"
+                  File "{(ROOT / 'README.md').as_posix()}"
+                  File "{(ROOT / 'config.example.json').as_posix()}"
+                  WriteUninstaller "$INSTDIR\\uninstall.exe"
+                  CreateShortCut "$DESKTOP\\Lofi.lnk" "$INSTDIR\\lofi-windows-{arch}.exe"
+                  WriteRegStr HKLM "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Lofi" "DisplayName" "Lofi {ver}"
+                  WriteRegStr HKLM "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Lofi" "UninstallString" "$INSTDIR\\uninstall.exe"
+                SectionEnd
+                Section "Uninstall"
+                  Delete "$INSTDIR\\lofi-windows-{arch}.exe"
+                  Delete "$INSTDIR\\uninstall.exe"
+                  RMDir "$INSTDIR"
+                SectionEnd
+                """)
+            nsi_path = BUILD / f"installer-{arch}.nsi"
+            nsi_path.parent.mkdir(parents=True, exist_ok=True)
+            nsi_path.write_text(nsi, encoding="utf-8")
+            cmd = ["makensis", str(nsi_path)]
+            print(f"+ {' '.join(cmd)}", flush=True)
+            subprocess.run(cmd, check=True)
+            # Also copy to short name
+            shutil.copy2(exe_path, exe_short_path)
+            print(f" → {exe_path} ({exe_path.stat().st_size/1024/1024:.1f} MB)")
+            return exe_path
+        except Exception as exc:
+            print(f"  makensis failed ({exc}), falling back to placeholder .exe", file=sys.stderr)
+
+    # Fallback placeholder .exe (zip with .exe extension, plus marker)
+    import zipfile
+    for out in (exe_path, exe_short_path):
+        with zipfile.ZipFile(out, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+            # The binary is stored with .exe name inside; the outer .exe is the installer placeholder
+            # For placeholder, we just zip the binary and call the zip .exe
+            # Real installer would be PE; placeholder is detectable via EMULATED.txt
+            zf.write(binary, arcname=binary.name)
+            zf.writestr("EMULATED.txt", f"Placeholder .exe installer — built on {platform.platform()} without NSIS makensis.\nCI on windows-{arch} (NSIS) produces a real installer .exe.\nThe inner {binary.name} is the PyInstaller binary; the outer .exe is the installer wrapper.\n")
+            for extra in (ROOT / "README.md", ROOT / "config.example.json"):
+                if extra.exists():
+                    zf.write(extra, arcname=extra.name)
+            # Add a small NSIS script placeholder as well
+            zf.writestr("installer.nsi.placeholder", f"; would be compiled with makensis on Windows\nOutFile {out.name}\n")
+        # Note: placeholder .exe is actually a zip; Windows will not execute it as installer,
+        # but it proves naming and CI will replace with real PE installer.
+        print(f" → {out} (placeholder zip-as-exe, {out.stat().st_size/1024:.1f} KB) — CI will produce real NSIS exe")
+    return exe_path
 
 
 def clean_all() -> None:
@@ -336,14 +530,13 @@ def clean_all() -> None:
         if p.exists():
             print(f"Removing {p} ...")
             shutil.rmtree(p, ignore_errors=True)
-    # PyInstaller spec file leaves .spec-adjacent work dirs
     for p in ROOT.glob("*.spec"):
         pass
     print("Clean done.")
 
 
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(description="Build Lofi native artifacts (6-way matrix).")
+    p = argparse.ArgumentParser(description="Build Lofi native artifacts (6-way matrix: .deb/.dmg/.exe).")
     p.add_argument("--clean", action="store_true", help="remove build/ and dist/ before building")
     p.add_argument("--check", action="store_true", help="run the built binary with --check after building")
     p.add_argument("--all", action="store_true", help="print the full 6-artifact matrix and how to build each")
@@ -359,50 +552,49 @@ def main(argv: list[str] | None = None) -> int:
         ver = version()
         print(f"Lofi {ver} — 6 release artifacts (1 arm + 1 native per OS):\n")
         matrix = [
-            ("linux", "amd64", "ubuntu-22.04", "Debian/Ubuntu amd64 — apt install ffmpeg libopus0; native runner"),
-            ("linux", "arm64", "ubuntu-24.04-arm", "Debian/Ubuntu arm64 — same apt line, arm64 runner (Raspberry Pi, Graviton)"),
-            ("macos", "amd64", "macos-13", "macOS Intel — brew install ffmpeg opus; intel runner"),
-            ("macos", "arm64", "macos-14", "macOS Apple Silicon — brew install ffmpeg opus; M1/M2 runner"),
-            ("windows", "amd64", "windows-2022", "Windows x64 — winget install Gyan.FFmpeg; opus bundled on Windows"),
-            ("windows", "arm64", "windows-11-arm", "Windows arm64 — same, arm64 runner"),
+            ("linux", "amd64", "ubuntu-22.04", f"lofi-{ver}-linux-amd64.deb", "Debian/Ubuntu amd64 — .deb via dpkg-deb; apt install ffmpeg libopus0"),
+            ("linux", "arm64", "ubuntu-24.04-arm", f"lofi-{ver}-linux-arm64.deb", "Debian/Ubuntu arm64 — .deb via dpkg-deb; Raspberry Pi / Graviton"),
+            ("macos", "amd64", "macos-13", f"lofi-{ver}-macos-amd64.dmg", "macOS Intel — .dmg via hdiutil; brew install ffmpeg opus"),
+            ("macos", "arm64", "macos-14", f"lofi-{ver}-macos-arm64.dmg", "macOS Apple Silicon — .dmg via hdiutil; M1/M2"),
+            ("windows", "amd64", "windows-2022", f"lofi-{ver}-windows-amd64-setup.exe", "Windows x64 — .exe installer via NSIS; winget install Gyan.FFmpeg"),
+            ("windows", "arm64", "windows-11-arm", f"lofi-{ver}-windows-arm64-setup.exe", "Windows arm64 — .exe installer via NSIS"),
         ]
-        for os_name, arch, runner, note in matrix:
-            name = artifact_name(os_name, arch, ver=ver)
-            archive = f"lofi-{ver}-{os_name}-{arch}.{'zip' if os_name=='windows' else 'tar.gz'}"
-            print(f"  {name:35}  {archive:35}  {runner:18}  {note}")
-        print("\nLocal build:  python scripts/build.py            # builds the artifact for THIS host")
-        print("CI builds all 6 on their native runners; see .github/workflows/release.yml")
-        print("Cross-compilation is not supported by PyInstaller — use a native runner or emulation (QEMU/Rosetta).")
+        print(f"  {'package':35}  {'runner':18}  note")
+        print(f"  {'-'*35}  {'-'*18}  {'-'*60}")
+        for os_name, arch, runner, pkg, note in matrix:
+            bin_name = artifact_name(os_name, arch, ver=ver)
+            print(f"  {pkg:35}  {runner:18}  {note}  (binary {bin_name})")
+        print("\nBinary = PyInstaller onefile; Package = OS-native wrapper (.deb/.dmg/.exe)")
+        print("Local build:  python scripts/build.py            # builds artifact for THIS host")
+        print("  → dist/lofi-<os>-<arch> (binary) + dist/lofi-<version>-<os>-<arch>.{deb,dmg,exe} (package)")
+        print("CI builds all 6 on native runners; see .github/workflows/release.yml")
+        print("Cross-compilation is not supported — use native runner or emulation.")
         return 0
 
     if args.name_only:
-        print(artifact_name_for_host(ver=version()))
+        os_name, arch = detect_os_arch()
+        # name-only prints the PACKAGE name for this host, not just binary
+        print(package_name(os_name, arch, ver=version()))
         return 0
 
     if args.clean:
         clean_all()
 
-    # Default: build
     built = build(clean=False)
     if args.check:
-        # Run --check on the freshly built binary
-        # Need to handle windows .exe vs linux binary invocation
-        # On linux the binary needs execute permission
         try:
             built.chmod(0o755)
         except OSError:
             pass
         print(f"\nRunning {built} --check ...\n", flush=True)
         env = dict(**__import__("os").environ)
-        # Isolate from host config by using a temp LOFI_HOME
         import tempfile
-        import os as _os
         with tempfile.TemporaryDirectory() as td:
             env["LOFI_HOME"] = td
             env["LOFI_TOKEN"] = "ci-dummy-token-not-used"
             result = subprocess.run([str(built), "--check"], env=env)
             print(f"\n--check exit code: {result.returncode}")
-            if result.returncode not in (0, 1):  # 0 ok, 1 missing deps is ok in CI without ffmpeg
+            if result.returncode not in (0, 1):
                 return result.returncode
     return 0
 

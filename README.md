@@ -31,23 +31,38 @@ is throttled, or on a box with no internet at all.
 
 ---
 
-## Downloads — 6 native binaries
+## Downloads — 6 native OS packages
 
 No Python needed — each release ships **6 artifacts: 1 arm + 1 native for each
-OS** (Debian/Linux, macOS, Windows), built with PyInstaller from [`lofi.spec`](lofi.spec):
+OS** as OS-native installers (`.deb` / `.dmg` / `.exe`), each containing a
+PyInstaller single-file binary from [`lofi.spec`](lofi.spec):
 
 | OS | amd64 (native) | arm64 |
 |---|---|---|
-| **Debian / Ubuntu** | `lofi-linux-amd64` · `.tar.gz` | `lofi-linux-arm64` · `.tar.gz` |
-| **macOS** | `lofi-macos-amd64` (Intel) | `lofi-macos-arm64` (Apple Silicon) |
-| **Windows** | `lofi-windows-amd64.exe` · `.zip` | `lofi-windows-arm64.exe` · `.zip` |
+| **Debian / Ubuntu** | `lofi-1.0.0-linux-amd64.deb` | `lofi-1.0.0-linux-arm64.deb` |
+| **macOS** | `lofi-1.0.0-macos-amd64.dmg` (Intel) | `lofi-1.0.0-macos-arm64.dmg` (Apple Silicon) |
+| **Windows** | `lofi-1.0.0-windows-amd64-setup.exe` (NSIS installer) | `lofi-1.0.0-windows-arm64-setup.exe` (NSIS) |
+
+Raw portable binaries `lofi-linux-*` / `lofi-macos-*` / `lofi-windows-*.exe` are also in each release.
 
 ```bash
-# Linux example
-tar -xzf lofi-1.0.0-linux-amd64.tar.gz
-sudo install -m 0755 lofi-linux-amd64 /usr/local/bin/lofi
-LOFI_TOKEN=... lofi --check   # then lofi
-# Windows: Expand-Archive lofi-*-windows-*.zip; .\lofi-windows-amd64.exe --check
+# Debian / Ubuntu
+sudo dpkg -i lofi-1.0.0-linux-amd64.deb && sudo apt-get install -f -y
+LOFI_TOKEN=... lofi --check   # binary at /usr/local/bin/lofi, then lofi
+# macOS
+open lofi-1.0.0-macos-arm64.dmg  # drag lofi to /usr/local/bin
+LOFI_TOKEN=... lofi --check
+# Windows
+lofi-1.0.0-windows-amd64-setup.exe   # installer → C:\Program Files\Lofi\lofi.exe
+lofi --check          # or portable: lofi-windows-amd64.exe --check
+# Raw binaries also available in release and in dist/ when building locally
+```
+
+System deps still required (`ffmpeg` + `libopus` — `apt`/`brew`/`winget` line
+below, or `pip install imageio-ffmpeg`). Details, local builds and CI matrix:
+[`docs/PACKAGING.md`](docs/PACKAGING.md) · [`scripts/build.py`](scripts/build.py) · `make artifacts`.
+
+Sources still run with Python — see Quick start below.
 ```
 
 System deps still required (`ffmpeg` + `libopus` — `apt`/`brew`/`winget` line

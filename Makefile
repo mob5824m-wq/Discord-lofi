@@ -1,12 +1,12 @@
-# Lofi — 6-artifact builder
+# Lofi — 6-artifact builder (.deb / .dmg / .exe)
 # 1 arm + 1 native for each OS: debian (linux), macOS, Windows
 # Each PyInstaller host builds only its own arch; CI builds all 6 natively.
 # Use:
 #   make help
-#   make build            # this host's artifact (lofi-<os>-<arch>)
+#   make build            # this host's binary + OS-native package
 #   make artifacts        # describe the 6-way matrix
-#   make dist             # build + archives (tar.gz/zip) for this host
-#   make dist-all         # emulate 6 archives locally (copies binary 6x for inspection)
+#   make dist             # build + package (.deb/.dmg/.exe) for this host
+#   make dist-all         # emulate 6 packages locally (copies binary 6x for inspection)
 #   make check            # run built binary with --check
 #   make clean
 
@@ -20,24 +20,26 @@ ARCH := $(shell $(PY) -c "import platform; m=platform.machine().lower(); print('
 ARTIFACT := lofi-$(OS)-$(ARCH)
 ifeq ($(OS),windows)
   ARTIFACT := lofi-$(OS)-$(ARCH).exe
-  ARCHIVE  := lofi-$(VERSION)-$(OS)-$(ARCH).zip
+  PACKAGE  := lofi-$(VERSION)-$(OS)-$(ARCH)-setup.exe
+else ifeq ($(OS),macos)
+  PACKAGE  := lofi-$(VERSION)-$(OS)-$(ARCH).dmg
 else
-  ARCHIVE  := lofi-$(VERSION)-$(OS)-$(ARCH).tar.gz
+  PACKAGE  := lofi-$(VERSION)-$(OS)-$(ARCH).deb
 endif
 
 .PHONY: help build dist artifacts dist-all check clean venv install
 
 help:
-	@echo "Lofi $(VERSION) — 6 native artifacts (1 arm + 1 native per OS)"
+	@echo "Lofi $(VERSION) — 6 native OS packages (1 arm + 1 native per OS: .deb/.dmg/.exe)"
 	@echo ""
-	@echo "  Host detected: $(OS)/$(ARCH) → $(ARTIFACT)  $(ARCHIVE)"
+	@echo "  Host detected: $(OS)/$(ARCH) → $(ARTIFACT)  $(PACKAGE)"
 	@echo ""
 	@echo "Targets:"
 	@echo "  make venv        create $(VENV) and install deps + PyInstaller"
-	@echo "  make build       PyInstaller single-file for THIS host → dist/$(ARTIFACT)"
-	@echo "  make dist        build + archive (tar.gz/zip) for THIS host"
+	@echo "  make build       PyInstaller binary + OS package for THIS host → dist/$(PACKAGE)"
+	@echo "  make dist        build + package (.deb/.dmg/.exe) for THIS host"
 	@echo "  make artifacts   show the 6-way matrix (no build)"
-	@echo "  make dist-all    emulate 6 archives locally by copying THIS binary 6× (inspection)"
+	@echo "  make dist-all    emulate 6 packages locally by copying THIS binary 6× (inspection)"
 	@echo "  make check       run the built binary with --check"
 	@echo "  make clean       remove build/ dist/"
 	@echo ""
@@ -57,14 +59,14 @@ build:
 	$(PY) scripts/build.py
 
 dist: build
-	@echo "Archive at dist/$(ARCHIVE):"
-	@ls -lh dist/$(ARCHIVE) 2>/dev/null || ls -lh dist/*.tar.gz dist/*.zip 2>/dev/null | head -n 20
+	@echo "Package at dist/$(PACKAGE):"
+	@ls -lh dist/$(PACKAGE) 2>/dev/null || ls -lh dist/*.deb dist/*.dmg dist/*.exe 2>/dev/null | head -n 20
 
 artifacts:
 	@$(PY) scripts/build.py --all
 
 dist-all: build
-	@echo "Emulating 6 artifacts from this host's binary for inspection..."
+	@echo "Emulating 6 packages (.deb/.dmg/.exe) from this host's binary for inspection..."
 	@$(PY) scripts/make_dist_all.py
 
 check:
