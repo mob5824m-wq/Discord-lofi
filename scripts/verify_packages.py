@@ -173,13 +173,20 @@ def check_exe(path: Path) -> Check:
     detail = "PE executable"
     try:
         machine = read_pe_machine(path, e_lfanew)
-        names = {0x8664: "x86-64", 0xAA64: "ARM64", 0x014C: "x86"}
+        names = {0x8664: "x86-64", 0xAA64: "ARM64", 0x014C: "x86 (32-bit)"}
         if machine in names:
             detail += f", machine {names[machine]}"
-            if path.name.count("arm64") and machine != 0xAA64:
-                return Check(path.name, False, f"name says arm64 but PE machine is {names[machine]}")
-            if "amd64" in path.name and machine != 0x8664:
-                return Check(path.name, False, f"name says amd64 but PE machine is {names[machine]}")
+            # The machine type is only a meaningful check for the portable
+            # PyInstaller binary. An NSIS installer is always a 32-bit PE and
+            # installs the correct-architecture binary on both x64 and ARM64
+            # Windows, so "-setup.exe" is judged on its payload, not its header.
+            if "-setup" not in path.name:
+                if "arm64" in path.name and machine != 0xAA64:
+                    return Check(path.name, False,
+                                 f"name says arm64 but PE machine is {names[machine]}")
+                if "amd64" in path.name and machine != 0x8664:
+                    return Check(path.name, False,
+                                 f"name says amd64 but PE machine is {names[machine]}")
     except Exception:  # reading the COFF header is a nicety, not a gate
         pass
     return Check(path.name, True, detail)

@@ -417,7 +417,7 @@ def make_dmg(binary: Path, arch: str, ver: str, allow_placeholder: bool = False)
                 "hdiutil not available, so a real .dmg cannot be built here.\n"
                 "  macOS: hdiutil ships with the OS (Xcode command line tools).\n"
                 "  Everywhere else: let GitHub Actions build it (release.yml, "
-                "macos-13 / macos-14 runners)."
+                "macos-15-intel / macos-14 runners)."
             )
         return _placeholder(binary, [dmg_path, dmg_short], "dmg", arch, ver)
 
@@ -633,7 +633,7 @@ def main(argv: list[str] | None = None) -> int:
         matrix = [
             ("linux", "amd64", "ubuntu-22.04", "dpkg-deb", "Debian/Ubuntu amd64"),
             ("linux", "arm64", "ubuntu-24.04-arm", "dpkg-deb", "Debian/Ubuntu arm64 — Pi / Graviton"),
-            ("macos", "amd64", "macos-13", "pkgbuild + hdiutil", "macOS Intel"),
+            ("macos", "amd64", "macos-15-intel", "pkgbuild + hdiutil", "macOS Intel"),
             ("macos", "arm64", "macos-14", "pkgbuild + hdiutil", "macOS Apple Silicon"),
             ("windows", "amd64", "windows-2022", "makensis (NSIS)", "Windows x64"),
             ("windows", "arm64", "windows-11-arm", "makensis (NSIS)", "Windows ARM64"),

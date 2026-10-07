@@ -217,6 +217,43 @@ def test_verifier_rejects_a_zip_renamed_as_a_package(tmp_path):
         assert "EMULATED.txt" in result.detail
 
 
+def _write_pe(path: Path, machine: int) -> None:
+    """A minimal but structurally valid PE: MZ header, e_lfanew, PE\0\0, COFF."""
+    import struct
+
+    e_lfanew = 0x80
+    blob = bytearray(e_lfanew)
+    blob[0:2] = b"MZ"
+    blob[0x3C:0x40] = struct.pack("<I", e_lfanew)
+    blob += b"PE\0\0"
+    blob += struct.pack("<H", machine)          # Machine
+    blob += struct.pack("<H", 1)                # NumberOfSections
+    blob += b"\0" * 16                          # TimeDateStamp..SizeOfOptionalHeader
+    blob += struct.pack("<H", 0)                # Characteristics
+    path.write_bytes(bytes(blob))
+
+
+def test_verifier_accepts_an_nsis_installer_that_is_a_32bit_pe(tmp_path):
+    """NSIS installers are 32-bit on purpose and run on x64 and ARM64 Windows."""
+    installer = tmp_path / "lofi-1.2.3-windows-amd64-setup.exe"
+    _write_pe(installer, 0x014C)
+    result = verifier.check_exe(installer)
+    assert result.ok, result.detail
+    assert "32-bit" in result.detail
+
+
+def test_verifier_still_catches_a_portable_binary_of_the_wrong_arch(tmp_path):
+    binary = tmp_path / "lofi-1.2.3-windows-arm64.exe"
+    _write_pe(binary, 0x8664)  # x86-64 binary named arm64
+    result = verifier.check_exe(binary)
+    assert not result.ok
+    assert "arm64" in result.detail
+
+    good = tmp_path / "lofi-1.2.3-windows-arm64-correct.exe"
+    _write_pe(good, 0xAA64)
+    assert verifier.check_exe(good).ok
+
+
 def test_verifier_reports_missing_expected_artifacts(tmp_path):
     results = verifier.verify_dir(tmp_path, expected=["lofi-1.2.3-linux-amd64.deb"])
     assert results and not results[0].ok and "MISSING" in results[0].detail

@@ -26,13 +26,13 @@ permissions:
 # GitHub-hosted runners used:
 #   linux-amd64   → ubuntu-22.04          → .deb via dpkg-deb
 #   linux-arm64   → ubuntu-24.04-arm      → .deb via dpkg-deb
-#   macos-amd64   → macos-13              → .dmg via hdiutil
+#   macos-amd64   → macos-15-intel        → .dmg via hdiutil (Intel)
 #   macos-arm64   → macos-14              → .dmg via hdiutil
 #   windows-amd64 → windows-2022          → .exe via NSIS makensis
 #   windows-arm64 → windows-11-arm        → .exe via NSIS makensis
 #
 # If a runner image is retired, replace it with the nearest equivalent
-# (e.g. macos-13 → macos-13-large, windows-11-arm → windows-2022 + emulation note).
+# (e.g. macos-15-intel → the next Intel label GitHub offers).
 # The artifact names stay stable: lofi-<version>-<os>-<arch>.(deb|dmg|exe)
 #
 # Auto-release on merge: every push to main (i.e. each merged PR) bumps VERSION
@@ -133,6 +133,7 @@ jobs:
             arch: amd64
             artifact: lofi-linux-amd64
             runner_note: debian amd64 (.deb)
+            optional: false
 
           - os: ubuntu-24.04-arm
             py: "3.11"
@@ -140,13 +141,15 @@ jobs:
             arch: arm64
             artifact: lofi-linux-arm64
             runner_note: debian arm64 (.deb) — Raspberry Pi / Graviton
+            optional: false
 
-          - os: macos-13
+          - os: macos-15-intel
             py: "3.11"
             target_os: macos
             arch: amd64
             artifact: lofi-macos-amd64
             runner_note: mac intel (.dmg)
+            optional: false
 
           - os: macos-14
             py: "3.11"
@@ -154,6 +157,7 @@ jobs:
             arch: arm64
             artifact: lofi-macos-arm64
             runner_note: mac apple silicon (.dmg)
+            optional: false
 
           - os: windows-2022
             py: "3.11"
@@ -161,16 +165,23 @@ jobs:
             arch: amd64
             artifact: lofi-windows-amd64.exe
             runner_note: windows amd64 (.exe NSIS installer)
+            optional: false
 
+          # Best-effort: Windows-on-ARM is real but niche, and its toolchain
+          # sometimes cannot install the Python deps. `continue-on-error` keeps
+          # it visible without blocking the other five; the release job drops it
+          # when it is missing rather than publishing nothing at all.
           - os: windows-11-arm
             py: "3.11"
             target_os: windows
             arch: arm64
             artifact: lofi-windows-arm64.exe
             runner_note: windows arm64 (.exe NSIS installer)
+            optional: true
 
     name: build ${{ matrix.target_os }}-${{ matrix.arch }} (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.optional }}
     timeout-minutes: 45
 
     steps:
@@ -237,8 +248,9 @@ jobs:
 
       - name: Install Python dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt pyinstaller
+          set -o pipefail
+          python -m pip install --upgrade pip 2>&1 | tee pip.log
+          pip install -r requirements.txt pyinstaller 2>&1 | tee -a pip.log
           pyinstaller --version
 
       - name: Resolve version
@@ -282,7 +294,10 @@ jobs:
           ls -lh dist/
 
           # Byte-level gate: real .deb/.dmg/.exe, not a renamed archive.
-          python scripts/verify_packages.py dist/ --expect "$(basename "$PKG")"
+          if ! python scripts/verify_packages.py dist/ --expect "$(basename "$PKG")" 2>&1 | tee verify.log; then
+            grep -m 10 -E "FAIL|MISSING|not a |placeholder" verify.log | sed 's/^/::error::/' || true
+            exit 1
+          fi
 
           # ...and the binary inside still runs.
           BIN="dist/${{ matrix.artifact }}"
@@ -311,20 +326,25 @@ jobs:
             file "$PKG" 2>/dev/null || true
           fi
 
-      # Log tail as annotations: the one thing that is readable about a failed
+      # Log tails as annotations: the one thing that is readable about a failed
       # job without opening the Actions UI.
-      - name: Show the build log on failure
+      - name: Diagnostics on failure
         if: failure()
         shell: bash
         run: |
-          if [ -f build.log ]; then
-            echo "::group::build.log (last 200 lines)"
-            tail -n 200 build.log || true
+          set +e
+          FOUND=0
+          for log in build.log pip.log verify.log; do
+            [ -f "$log" ] || continue
+            FOUND=1
+            echo "::group::$log (last 120 lines)"
+            tail -n 120 "$log"
             echo "::endgroup::"
-            grep -m 10 -E "ERROR|error:|Fatal|fatal|Traceback" build.log \
-              | sed 's/^/::error::/' || true
-          else
-            echo "::error::build.log was never created - the build step died before writing it"
+            grep -m 5 -E "error|Error|ERROR|Failed|failed|Traceback|No matching" "$log" \
+              | cut -c1-240 | sed 's/^/::error::/'
+          done
+          if [ "$FOUND" = "0" ]; then
+            echo "::error::no build log was written - the job died before the build step"
           fi
           ls -la dist/ 2>/dev/null || true
 
@@ -413,19 +433,25 @@ jobs:
           echo "--- 6-way matrix presence + byte-level format check ---"
           ARGS=()
           MISSING=0
-          for f in lofi-${VER}-linux-amd64.deb lofi-${VER}-linux-arm64.deb \
-                   lofi-${VER}-macos-amd64.dmg lofi-${VER}-macos-arm64.dmg \
-                   lofi-${VER}-windows-amd64-setup.exe lofi-${VER}-windows-arm64-setup.exe; do
-            ARGS+=(--expect "$f")
+          # windows-arm64 is best-effort (continue-on-error in the matrix): a
+          # missing ARM64 installer is reported, a missing anything else is fatal.
+          REQUIRED="lofi-${VER}-linux-amd64.deb lofi-${VER}-linux-arm64.deb \
+                    lofi-${VER}-macos-amd64.dmg lofi-${VER}-macos-arm64.dmg \
+                    lofi-${VER}-windows-amd64-setup.exe"
+          OPTIONAL="lofi-${VER}-windows-arm64-setup.exe"
+          for f in $REQUIRED $OPTIONAL; do
             if [ -f "release-dist/$f" ]; then
               echo "present: $f"
-            else
-              echo "MISSING $f"
+              ARGS+=(--expect "$f")
+            elif echo "$REQUIRED" | grep -qw "$f"; then
+              echo "MISSING (required) $f"
               MISSING=1
+            else
+              echo "absent (optional, skipped): $f"
             fi
           done
           if [ "$MISSING" = "1" ]; then
-            echo "::error::an artifact is missing; refusing to publish a partial release"
+            echo "::error::a required artifact is missing; refusing to publish a partial release"
             ls -l release-dist/
             exit 1
           fi

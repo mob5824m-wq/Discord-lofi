@@ -8,10 +8,10 @@ OS** on 6 GitHub-hosted runners and publishes them as OS-native installers.
 |---|---|---|---|---|
 | Debian / Ubuntu (`linux`) | **amd64** | `lofi-<ver>-linux-amd64.deb` | `ubuntu-22.04` | `dpkg-deb` |
 | Debian / Ubuntu (`linux`) | **arm64** | `lofi-<ver>-linux-arm64.deb` | `ubuntu-24.04-arm` | `dpkg-deb` |
-| macOS | **amd64** (Intel) | `lofi-<ver>-macos-amd64.dmg` (holds `Lofi-<ver>.pkg`) | `macos-13` | `pkgbuild` + `hdiutil` |
+| macOS | **amd64** (Intel) | `lofi-<ver>-macos-amd64.dmg` (holds `Lofi-<ver>.pkg`) | `macos-15-intel` | `pkgbuild` + `hdiutil` |
 | macOS | **arm64** (Apple Silicon) | `lofi-<ver>-macos-arm64.dmg` | `macos-14` | `pkgbuild` + `hdiutil` |
 | Windows | **amd64** | `lofi-<ver>-windows-amd64-setup.exe` | `windows-2022` | NSIS `makensis` |
-| Windows | **arm64** | `lofi-<ver>-windows-arm64-setup.exe` | `windows-11-arm` | NSIS `makensis` |
+| Windows | **arm64** | `lofi-<ver>-windows-arm64-setup.exe` | `windows-11-arm` | NSIS `makensis` (best effort) |
 
 Each installer is also published under a **short, unversioned name** —
 `lofi-linux-amd64.deb`, `lofi-macos-arm64.dmg`, `lofi-windows-amd64-setup.exe` —
@@ -198,9 +198,12 @@ Gyan.FFmpeg`, and `lofi --check` will say so if it is missing.
    `python scripts/build.py` (one PyInstaller run + one packaging run) and then
    `scripts/verify_packages.py`. Failures print the build-log tail as `::error::`
    annotations so they are visible without opening the log.
-3. **`release`** — downloads everything, re-verifies all 6 with
+3. **`release`** — downloads everything, re-verifies them with
    `scripts/verify_packages.py`, writes `SHA256SUMS.txt`, and publishes the
-   GitHub Release with install instructions.
+   GitHub Release with install instructions. Windows ARM64 is marked
+   `continue-on-error` in the matrix: if its toolchain cannot install the Python
+   dependencies, the other five still ship and the missing installer is reported
+   instead of blocking the release.
 
 ```bash
 # merge a PR to main  → 1.0.1 → 1.0.2 → Release v1.0.2 with 6 installers
@@ -210,9 +213,12 @@ gh workflow run release --ref main -f version=1.3.0 -f bump=minor
 
 ### Runner image retirement
 
-If GitHub retires an image (say `macos-13`), replace it with the nearest
-equivalent (`macos-13-large`, `macos-14`, …). Artifact **names** stay stable;
-the version string is the only identifier downstream should parse.
+If GitHub retires an image, replace it with the nearest equivalent. The Intel
+macOS entry already had to move once: `macos-13` was retired on 2025-12-04, and
+jobs asking for it are never picked up — they sit queued until the run is
+cancelled, which looks like runner capacity from the outside. It is now
+`macos-15-intel`. Artifact **names** stay stable; the version string is the only
+identifier downstream should parse.
 
 ---
 
