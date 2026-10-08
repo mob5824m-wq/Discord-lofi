@@ -60,6 +60,13 @@ def test_installer_name_never_collides_with_the_portable_binary():
     assert installer != binary
 
 
+def test_pyinstaller_spec_bundles_pynacls_cffi_backend():
+    """Without the CFFI extension, PyNaCl is present but Discord disables voice."""
+    spec = (ROOT / "lofi.spec").read_text(encoding="utf-8")
+    assert '"nacl._sodium"' in spec
+    assert '"_cffi_backend"' in spec
+
+
 @pytest.mark.parametrize("os_name,arch,_", MATRIX)
 def test_binary_name(os_name, arch, _):
     name = buildscript.artifact_name(os_name, arch, ver="1.2.3")

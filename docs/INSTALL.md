@@ -261,6 +261,7 @@ a detail and — when something is wrong — the exact command to fix it:
 | --- | --- |
 | `Python` | version against the 3.9 minimum |
 | `discord.py` | importable, and which version |
+| `PyNaCl` | voice-encryption bindings import successfully, or the install fix |
 | `ffmpeg` | a binary on `PATH`, `LOFI_FFMPEG`, common install locations, or the `imageio-ffmpeg` bundle |
 | `libopus` | whether discord.py can load it, or where a candidate library was found |
 | `yt-dlp` | installed version, or that YouTube stations will not resolve |
@@ -272,8 +273,8 @@ a detail and — when something is wrong — the exact command to fix it:
 | `dashboard` | the host:port it will bind, plus a warning if that is reachable off this machine |
 | `stations` | how many stations are available and how many work with no network at all |
 
-`--check` exits non-zero if any of **Python, ffmpeg, libopus or the bot token** is missing — the
-four things without which there is no audio. Everything else is a warning or "optional".
+`--check` exits non-zero if any of **Python, PyNaCl, ffmpeg, libopus or the bot token** is missing —
+without them the bot cannot play voice audio. Everything else is a warning or "optional".
 
 Nothing in `--check` connects to Discord, so it is safe to run on a machine with no internet and
 safe to run repeatedly.

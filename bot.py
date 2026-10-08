@@ -7,12 +7,11 @@ Run it with::
     python3 bot.py --demo           # dashboard only, with simulated servers
     python3 bot.py --dashboard-token  # print the dashboard login key
 
-The bot needs three things to make sound: a Discord token with the *no
-privileged intents* defaults (``guilds`` and ``voice_states`` are enough), an
-**ffmpeg** binary, and **libopus**. ``--check`` tests all of them and prints
-what to install for whatever is missing, because a voice bot that cannot play
-audio otherwise fails silently - it joins the channel, says nothing, and logs
-nothing.
+The bot needs a Discord token with the *no privileged intents* defaults
+(``guilds`` and ``voice_states`` are enough), **PyNaCl** for voice encryption,
+an **ffmpeg** binary and **libopus**. ``--check`` tests these and prints what
+to install for whatever is missing, because a voice bot that cannot play audio
+otherwise fails silently - it joins the channel, says nothing, and logs nothing.
 
 A first run has no token to read, so it asks for one and stores it in
 ``config.json``: that single question is the whole first-run setup, and no
@@ -44,6 +43,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
+import importlib
 import logging
 import logging.handlers
 import os
@@ -146,8 +146,8 @@ class LofiBot(commands.Bot):
         self.voice_ready = self._probe_voice()
         if not self.voice_ready:
             logger.warning(
-                "Voice support is not ready: opus or ffmpeg is missing. Run "
-                "'python3 bot.py --check' for the fix. The dashboard still works."
+                "Voice support is not ready: one or more of PyNaCl, libopus or ffmpeg is "
+                "missing. Run 'python3 bot.py --check' for the fix. The dashboard still works."
             )
 
         self.tree.add_command(command_tree.build(self))
@@ -169,6 +169,11 @@ class LofiBot(commands.Bot):
 
     def _probe_voice(self) -> bool:
         """Can this process actually send audio? Checked once, up front."""
+        # discord.py logs its own warning when `nacl` cannot be imported, but
+        # does not stop the client from starting. Check it here as well so the
+        # app does not advertise voice playback as ready when encryption cannot
+        # work.
+        pynacl_ok = _pynacl_version() is not None
         opus_ok = False
         try:
             opus_ok = discord.opus.is_loaded()
@@ -183,7 +188,7 @@ class LofiBot(commands.Bot):
                 except Exception as exc:
                     logger.debug("Could not load opus from %s: %s", library, exc)
         ffmpeg_ok = bool(paths.ffmpeg_executable())
-        return bool(opus_ok and ffmpeg_ok)
+        return bool(pynacl_ok and opus_ok and ffmpeg_ok)
 
     async def on_ready(self) -> None:
         self._ready_at = time.time()
@@ -353,6 +358,32 @@ def setup_logging(level: str = "INFO", logfile: Optional[str] = None) -> None:
 # --------------------------------------------------------------------------- #
 # --check
 # --------------------------------------------------------------------------- #
+def _pynacl_version() -> Optional[str]:
+    """Return PyNaCl's version only when its voice bindings really import."""
+    try:
+        module = importlib.import_module("nacl")
+        # Importing the bindings also loads PyNaCl's native sodium extension;
+        # a top-level `nacl` package alone is not enough for Discord voice.
+        importlib.import_module("nacl.bindings")
+    except Exception:
+        return None
+    version = getattr(module, "__version__", None)
+    return version if isinstance(version, str) else "installed"
+
+
+def _pynacl_fixes() -> list[str]:
+    """Installation advice differs for source installs and frozen binaries."""
+    if getattr(sys, "frozen", False):
+        return [
+            "This Lofi binary should bundle PyNaCl. Upgrade to a release with the packaging fix; "
+            "if the warning persists, report `lofi --version` and your OS/architecture."
+        ]
+    return [
+        "Use the same Python that runs Lofi: python -m pip install -r requirements.txt",
+        "Windows on ARM64: python -m pip install -r requirements-winarm.txt",
+    ]
+
+
 def _check_rows() -> list[tuple[str, str, str, list[str]]]:
     """``(label, state, detail, fixes)`` for everything audio needs."""
     rows: list[tuple[str, str, str, list[str]]] = []
@@ -369,6 +400,18 @@ def _check_rows() -> list[tuple[str, str, str, list[str]]]:
 
     discord_version = getattr(discord, "__version__", "unknown")
     rows.append(("discord.py", "ok", discord_version, []))
+
+    pynacl_version = _pynacl_version()
+    rows.append(
+        (
+            "PyNaCl",
+            "ok" if pynacl_version else "missing",
+            f"{pynacl_version} (voice encryption)"
+            if pynacl_version
+            else "not importable (Discord voice will not be supported)",
+            [] if pynacl_version else _pynacl_fixes(),
+        )
+    )
 
     ffmpeg = paths.ffmpeg_executable()
     rows.append(
@@ -557,7 +600,7 @@ def run_check() -> int:
     blocking = False
     for label, state, detail, suggestions in rows:
         print(f" {marks.get(state, '?')} {label.ljust(width)}  {detail}")
-        if state == "missing" and label in {"ffmpeg", "libopus", "bot token", "Python"}:
+        if state == "missing" and label in {"PyNaCl", "ffmpeg", "libopus", "bot token", "Python"}:
             blocking = True
         for suggestion in suggestions:
             fixes.append(f"  · {suggestion}")

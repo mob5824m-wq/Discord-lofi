@@ -400,12 +400,29 @@ jobs:
           chmod +x "$BIN" 2>/dev/null || true
           export LOFI_TOKEN=ci-dummy-token-not-used
           export LOFI_HOME="$RUNNER_TEMP/lofi-home"
-          if [ "$OS" = "windows" ]; then
-            "$BIN" --version
-          else
-            "$BIN" --version
-            "$BIN" --check || echo "--check reported missing system deps (exit $?)"
-          fi
+          "$BIN" --version
+          # PyNaCl is required for Discord voice encryption and must be inside
+          # the frozen binary, not merely present in the build venv. Run the
+          # same diagnostic users get, then fail specifically if its runtime
+          # import is missing. Other --check rows may still report host tools.
+          CHECK_LOG="$RUNNER_TEMP/lofi-check.log"
+          "$BIN" --check > "$CHECK_LOG" 2>&1 || true
+          cat "$CHECK_LOG"
+          python - "$CHECK_LOG" <<'PY'
+          from pathlib import Path
+          import sys
+
+          text = Path(sys.argv[1]).read_text(encoding="utf-8", errors="replace")
+          row = next((line for line in text.splitlines()
+                      if len(line.split()) > 1 and line.split()[1] == "PyNaCl"), None)
+          if row is None:
+              print("::error::--check did not report the PyNaCl runtime row")
+              raise SystemExit(1)
+          if "not importable" in row:
+              print("::error::The packaged binary cannot import PyNaCl; Discord voice would be disabled.")
+              raise SystemExit(1)
+          print(f"PyNaCl is bundled and importable: {row.strip()}")
+          PY
 
           # Per-OS detail, so the log shows what a user will actually get.
           if [ "$OS" = "linux" ] && command -v dpkg-deb >/dev/null 2>&1; then

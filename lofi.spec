@@ -60,10 +60,14 @@ hiddenimports = [
     "yarl",
     "multidict",
     "frozenlist",
-    # voice crypto
+    # voice crypto. PyNaCl's compiled `_sodium` extension imports CFFI's
+    # `_cffi_backend` dynamically; bundle both explicitly or discord.py treats
+    # PyNaCl as absent in the frozen binary (voice is then disabled).
     "nacl",
     "nacl.secret",
     "nacl.bindings",
+    "nacl._sodium",
+    "_cffi_backend",
     # station resolution / generative
     "yt_dlp",
     "yt_dlp.extractor",

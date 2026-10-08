@@ -139,7 +139,7 @@ python3 bot.py             # "Bot token: " → paste → Enter, then it connects
 
 That one prompt is the whole setup: it asks for the token, stores it in `config.json`
 (gitignored, mode 0600) and starts. Nothing else is asked, because nothing else is needed —
-`--check` reports on ffmpeg, libopus and the rest. Prefer to do it yourself:
+`--check` reports on PyNaCl, ffmpeg, libopus and the rest. Prefer to do it yourself:
 
 ```bash
 cp config.example.json config.json   # config.json is gitignored: it holds your token
@@ -153,7 +153,7 @@ runs before you copy anything.
 **4. Check, then run**
 
 ```bash
-python3 bot.py --check     # ✓ ffmpeg, ✓ libopus, ✓ token, ✓ data dir …
+python3 bot.py --check     # ✓ PyNaCl, ✓ ffmpeg, ✓ libopus, ✓ token …
 python3 bot.py
 ```
 

@@ -207,11 +207,11 @@ The dashboard line comes first because the server binds during `setup_hook`, bef
 else. The `Autostart:` line only appears for servers with `autostart` configured, and each one says
 what happened (`now playing in #channel`, `configured voice channel no longer exists`, or the error).
 
-If opus or ffmpeg is missing you get one warning instead of the voice lines:
+If PyNaCl, libopus or ffmpeg is missing you get one warning instead of the voice lines:
 
 ```
-Voice support is not ready: opus or ffmpeg is missing. Run 'python3 bot.py --check' for
-the fix. The dashboard still works.
+Voice support is not ready: one or more of PyNaCl, libopus or ffmpeg is missing. Run
+'python3 bot.py --check' for the fix. The dashboard still works.
 ```
 
 and the bot still starts — the dashboard, the configuration commands and the offline diagnostics all

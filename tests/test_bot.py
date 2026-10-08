@@ -111,7 +111,7 @@ def test_the_version_matches_the_version_file():
 # --------------------------------------------------------------------------- #
 def test_the_check_covers_everything_audio_needs():
     labels = {row[0] for row in bot_module._check_rows()}
-    for expected in ("Python", "discord.py", "ffmpeg", "libopus", "bot token", "data directory"):
+    for expected in ("Python", "discord.py", "PyNaCl", "ffmpeg", "libopus", "bot token", "data directory"):
         assert expected in labels, expected
 
 
@@ -127,6 +127,15 @@ def test_a_missing_row_comes_with_a_fix():
     for label, state, detail, fixes in bot_module._check_rows():
         if state == "missing":
             assert fixes, label
+
+
+def test_missing_pynacl_has_platform_appropriate_fixes(monkeypatch):
+    monkeypatch.setattr(bot_module, "_pynacl_version", lambda: None)
+    row = next(row for row in bot_module._check_rows() if row[0] == "PyNaCl")
+    assert row[1] == "missing"
+    assert "will not be supported" in row[2]
+    assert any("requirements.txt" in fix for fix in row[3])
+    assert any("requirements-winarm.txt" in fix for fix in row[3])
 
 
 def test_ffmpeg_fixes_name_the_install_command(monkeypatch):
@@ -179,6 +188,21 @@ def test_run_check_fails_when_audio_cannot_work(tmp_state, monkeypatch, capsys):
     assert code == 1
     assert "✗" in output
     assert "Audio will not work" in output
+
+
+def test_run_check_fails_when_pynacl_is_missing(tmp_state, monkeypatch, capsys):
+    monkeypatch.setenv("LOFI_TOKEN", "a-token-from-the-environment")
+    monkeypatch.setattr(bot_module, "_pynacl_version", lambda: None)
+    monkeypatch.setattr(paths, "ffmpeg_executable", lambda name="ffmpeg": "/usr/bin/ffmpeg")
+    monkeypatch.setattr(paths, "opus_library", lambda: "/usr/lib/libopus.so")
+    monkeypatch.setattr(discord.opus, "is_loaded", lambda: False)
+
+    code = bot_module.run_check()
+    output = capsys.readouterr().out
+    assert code == 1
+    assert "PyNaCl" in output
+    assert "Discord voice will not be supported" in output
+    assert "requirements.txt" in output
 
 
 def test_run_check_deduplicates_the_fixes(tmp_state, monkeypatch, capsys):
@@ -448,16 +472,26 @@ def test_probe_voice_reports_the_audio_dependencies(tmp_state, monkeypatch):
     assert instance.voice_ready is False
 
 
-def test_probe_voice_is_true_when_ffmpeg_and_opus_are_present(tmp_state, monkeypatch):
+def test_probe_voice_is_true_when_all_audio_dependencies_are_present(tmp_state, monkeypatch):
+    monkeypatch.setattr(bot_module, "_pynacl_version", lambda: "1.5.0")
     monkeypatch.setattr(paths, "ffmpeg_executable", lambda name="ffmpeg": "/usr/bin/ffmpeg")
     monkeypatch.setattr(discord.opus, "is_loaded", lambda: True)
     instance = bot_module.LofiBot(start_dashboard=False)
     assert instance._probe_voice() is True
 
 
+def test_probe_voice_requires_pynacl_even_with_opus_and_ffmpeg(tmp_state, monkeypatch):
+    monkeypatch.setattr(bot_module, "_pynacl_version", lambda: None)
+    monkeypatch.setattr(paths, "ffmpeg_executable", lambda name="ffmpeg": "/usr/bin/ffmpeg")
+    monkeypatch.setattr(discord.opus, "is_loaded", lambda: True)
+    instance = bot_module.LofiBot(start_dashboard=False)
+    assert instance._probe_voice() is False
+
+
 def test_probe_voice_loads_opus_from_a_known_path(tmp_state, monkeypatch):
     """Some installs ship libopus somewhere the loader does not look by default."""
     loaded = []
+    monkeypatch.setattr(bot_module, "_pynacl_version", lambda: "1.5.0")
     monkeypatch.setattr(paths, "ffmpeg_executable", lambda name="ffmpeg": "/usr/bin/ffmpeg")
     monkeypatch.setattr(discord.opus, "is_loaded", lambda: False)
     monkeypatch.setattr(paths, "opus_library", lambda: "/usr/lib/libopus.so")
