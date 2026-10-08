@@ -26,14 +26,14 @@ the ones the bot actually prints — so you can search this page for the text yo
 Three tools, in the order that finds problems fastest:
 
 ```bash
-python3 bot.py --check     # the install: python, ffmpeg, opus, yt-dlp, numpy, token, paths, binding
+python3 bot.py --check     # the install: python, PyNaCl, ffmpeg, opus, yt-dlp, numpy, token, paths
 /lofi status               # one server: connection, the permission audit, resolved settings, last error
 python3 bot.py --log-level DEBUG --logfile      # then: tail the file it names
 ```
 
 `--check` never connects to Discord and is safe to run on a machine with no network. It exits **1**
-if any of Python, ffmpeg, libopus or the bot token is missing, and prints the exact command to fix
-each one.
+if any of Python, PyNaCl, ffmpeg, libopus or the bot token is missing, and prints the exact command
+to fix each one.
 
 `/lofi status` is the one to trust for "it joined but nothing happened", because it reports what the
 bot can actually see *in that channel*, including permissions granted server-wide but denied by a
@@ -43,6 +43,20 @@ The dashboard's **Player** page shows the same information plus the watchdog's r
 the stall detector, and its **Servers** page shows the permission audit with a reason for every row.
 
 ## No sound
+
+**`WARNING discord.client: PyNaCl is not installed, voice will NOT be supported`.** Discord cannot
+import PyNaCl, which provides the encryption bindings required for voice. Run `python3 bot.py --check`
+with the same environment that starts the bot. For a source install, install the matching
+requirements file from the project root:
+
+```bash
+python -m pip install -r requirements.txt
+# Windows on ARM64: python -m pip install -r requirements-winarm.txt
+```
+
+If this is an official frozen Lofi binary, a missing import is a packaging defect: installing PyNaCl
+into system Python will not change the bundled executable. Upgrade to a Lofi build with the packaging
+fix, or run from source in the meantime.
 
 **It joins the channel, sits silent, and `/lofi status` says a permission is missing.**
 `Speak` is required to send audio. It can be granted server-wide and still be denied by a channel
@@ -70,8 +84,8 @@ architecture is reported as missing rather than as working.
 The startup warning names it:
 
 ```
-Voice support is not ready: opus or ffmpeg is missing. Run 'python3 bot.py --check' for
-the fix. The dashboard still works.
+Voice support is not ready: one or more of PyNaCl, libopus or ffmpeg is missing. Run
+'python3 bot.py --check' for the fix. The dashboard still works.
 ```
 
 **Sound works for one person and not another.** That is a Discord client setting, not the bot:
