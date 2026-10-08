@@ -216,7 +216,12 @@ python3 -m venv .venv
 source .venv/bin/activate            # Windows: .venv\Scripts\activate
 pip install -r requirements.txt      # runtime
 pip install -r requirements-dev.txt  # optional: pytest + pytest-asyncio
+python3 -c "import discord; print(discord.__version__)"   # must print a version
 ```
+
+Activate the venv (`source .venv/bin/activate`) in every new terminal before running `bot.py`. Without it
+the system Python runs and fails with `ModuleNotFoundError: No module named 'discord'`; see
+[TROUBLESHOOTING.md](TROUBLESHOOTING.md#wont-start-no-module-named-discord).
 
 `requirements.txt`:
 

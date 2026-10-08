@@ -188,9 +188,13 @@ Two behaviours worth knowing:
 ## 6. Start it and publish the commands
 
 ```bash
-source .venv/bin/activate
+source .venv/bin/activate              # Windows: .venv\Scripts\activate - every new terminal
 python3 bot.py
 ```
+
+If this fails with `ModuleNotFoundError: No module named 'discord'`, the venv is not active or the
+requirements were not installed into it. See
+[TROUBLESHOOTING.md](TROUBLESHOOTING.md#wont-start-no-module-named-discord).
 
 On a clean start:
 

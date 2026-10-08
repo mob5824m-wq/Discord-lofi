@@ -4,6 +4,7 @@ Everything here was written against a real failure mode in this codebase, and th
 the ones the bot actually prints — so you can search this page for the text you saw.
 
 - [Read this first](#read-this-first)
+- [Won't start: `No module named 'discord'`](#wont-start-no-module-named-discord)
 - [No sound](#no-sound)
 - [YouTube stations](#youtube-stations)
 - [Streams (SomaFM and friends)](#streams-somafm-and-friends)
@@ -41,6 +42,63 @@ channel override — the single most common cause of a silent bot.
 
 The dashboard's **Player** page shows the same information plus the watchdog's restart counter and
 the stall detector, and its **Servers** page shows the permission audit with a reason for every row.
+
+## Won't start: `No module named 'discord'`
+
+```
+Traceback (most recent call last):
+  File "/home/you/Discord-lofi/bot.py", line 55, in <module>
+    import discord
+ModuleNotFoundError: No module named 'discord'
+```
+
+This is not a bot or token problem. It means the Python that is running `bot.py` does not have the
+project's dependencies installed. It happens in three common cases:
+
+1. **The virtual environment is not active.** You ran `python3 bot.py` from a new terminal, so the
+   system Python ran instead of the one in `.venv`. Activate it and run again:
+
+   ```bash
+   cd Discord-lofi
+   source .venv/bin/activate        # Windows: .venv\Scripts\activate
+   python3 bot.py
+   ```
+
+   An active venv shows `(.venv)` at the start of your prompt. If you don't see it, you are not
+   using the venv.
+
+2. **The venv was never set up, or the install did not finish.** Create it and install the
+   requirements once (this is the same for every flag, including `--dashboard-token`):
+
+   ```bash
+   python3 -m venv .venv
+   source .venv/bin/activate
+   pip install -r requirements.txt
+   ```
+
+   If `python3 -m venv` fails on Debian or Ubuntu, run `sudo apt install python3-venv` first.
+   On a Mac, use `brew install python` or the python.org installer.
+
+3. **Packages went into a different Python.** `pip` and `python3` can point at different
+   interpreters. Install through the same interpreter that runs the bot:
+
+   ```bash
+   python3 -m pip install -r requirements.txt
+   ```
+
+**Check which Python is running and whether discord is installed:**
+
+```bash
+which python3                  # should end in .venv/bin/python3 once the venv is active
+python3 -c "import discord; print(discord.__version__)"
+```
+
+If the second command prints a version, the bot can start. Run `python3 bot.py --check` to confirm the
+rest of the install.
+
+**Why this breaks in practice:** every `python3 bot.py` flag, including `--dashboard-token`, imports
+`discord` before it reads its arguments, so the script can't even print the dashboard key without the
+dependencies. Only the venv's Python has them.
 
 ## No sound
 
