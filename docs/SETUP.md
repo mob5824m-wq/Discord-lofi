@@ -423,6 +423,54 @@ travels inside SSH.
 throwaway local preview and logs a warning saying it disables DNS-rebinding protection. Do not leave
 it on anything reachable.
 
+### Logging in over SSH
+
+The tunnel needs an SSH login on the server. A key is the better choice; a password works if you need one.
+
+- **Key (recommended).** Add your public key to `~/.ssh/authorized_keys` on the server. `ssh-copy-id you@your-server` does this from Linux or macOS. Keys can't be brute-forced in practice, and you can remove one device's key without touching the others.
+- **Password.** Use a long random password for that account, set with `passwd`. Password logins are brute-force targets on any port reachable from the internet, so if you keep them on, run fail2ban as well.
+
+Put the server settings in a drop-in file, so changes to the main `sshd_config` can't overwrite them:
+
+```
+# /etc/ssh/sshd_config.d/10-lofi.conf
+# Key login only. For a password login, set PasswordAuthentication yes.
+PubkeyAuthentication yes
+PasswordAuthentication no
+PermitEmptyPasswords no
+PermitRootLogin prohibit-password
+AllowTcpForwarding yes
+```
+
+OpenSSH uses the first value it reads for each setting, so the `Include /etc/ssh/sshd_config.d/*.conf` line must sit above any conflicting setting in `/etc/ssh/sshd_config`. If that file has no Include line, put the settings in it directly. Then check and reload:
+
+```
+sudo sshd -t                         # no output means the syntax is fine
+sudo sshd -T | grep -E '^(permitrootlogin|permitemptypasswords|passwordauthentication|allowtcpforwarding) '
+sudo systemctl reload ssh            # the service is called "sshd" on RHEL-family systems
+```
+
+Keep your current session open until a new login works from a second terminal. A bad sshd config can lock you out, and that open session is your way back in.
+
+What each line does, and why:
+
+- **`PermitRootLogin prohibit-password`**: root can still log in with a key, but never with a password. Root is the first username most password attacks try.
+- **`PermitEmptyPasswords no`**: an account with an empty password can't log in over SSH. Some images ship with this on, which lets anyone who can reach the port into any account that has no password set.
+- **`AllowTcpForwarding yes`**: the tunnel needs it. Hardened images sometimes turn it off.
+- **`PasswordAuthentication no`**: key login only. Set it to `yes` only for the password option above.
+
+Using the tunnel:
+
+```
+ssh -N -o ServerAliveInterval=60 -L 8790:127.0.0.1:8790 you@your-server
+```
+
+Then browse to <http://127.0.0.1:8790> on your machine.
+
+- Don't add `-g`. It makes the forwarded port reachable from your whole network, not just your machine.
+- Get the dashboard key in a second SSH session with `python3 bot.py --dashboard-token`, run from the install directory (use the venv's Python if you made one).
+- On Windows with PuTTY, the tunnel is under Connection → SSH → Tunnels: source port `8790`, destination `127.0.0.1:8790`.
+
 ## 10. More than one server
 
 One process handles every server it is in, with a player per guild — independent stations, volumes,
