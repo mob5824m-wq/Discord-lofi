@@ -116,6 +116,19 @@ pip install -r requirements.txt        # runtime
 pip install -r requirements-dev.txt    # optional: pytest + pytest-asyncio
 ```
 
+**Every time you open a new terminal**, activate the venv before running any `bot.py` command. Your
+prompt should show `(.venv)`:
+
+```bash
+cd Discord-lofi
+source .venv/bin/activate              # Windows: .venv\Scripts\activate
+python3 bot.py --dashboard-token       # now works
+```
+
+If you see `ModuleNotFoundError: No module named 'discord'`, the venv is not active or the
+requirements were not installed into it. See
+[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md#wont-start-no-module-named-discord).
+
 Create the application at <https://discord.com/developers/applications> → *Bot* → *Reset Token*,
 then invite it with **both** the `bot` and `applications.commands` scopes — the bot publishes its own
 slash commands on start, and it can only do that in a server that granted the scope:
