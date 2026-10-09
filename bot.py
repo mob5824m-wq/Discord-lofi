@@ -330,10 +330,56 @@ def _first_speakable_channel(guild: discord.Guild) -> Optional[discord.TextChann
 # --------------------------------------------------------------------------- #
 # Logging
 # --------------------------------------------------------------------------- #
+class _SafeStreamHandler(logging.StreamHandler):
+    """A StreamHandler that never raises UnicodeEncodeError on emoji.
+
+    In containers or locales with LANG=C the stdout encoding can be latin-1,
+    and a log line containing 📚 or 🎧 would otherwise crash the logging
+    thread with ``UnicodeEncodeError: 'latin-1' codec can't encode character``.
+    The handler falls back to ``backslashreplace`` so the message is still
+    visible and logging keeps working.
+    """
+
+    def emit(self, record: logging.LogRecord) -> None:
+        # Do not call super().emit() because StreamHandler.emit() catches
+        # *all* exceptions and turns them into a "Logging error" traceback
+        # on stderr, which is exactly the spam the user reported (repeated
+        # 31 times). Instead, re-implement the write with an explicit
+        # UnicodeEncodeError fallback.
+        try:
+            msg = self.format(record)
+            stream = self.stream
+            try:
+                stream.write(msg + self.terminator)
+            except UnicodeEncodeError:
+                # Fallback: backslashreplace makes the emoji visible as
+                # \U0001f4da and is always encodable in latin-1.
+                enc = getattr(stream, "encoding", None) or "utf-8"
+                fallback = msg.encode(enc, errors="backslashreplace").decode(enc, errors="replace")
+                try:
+                    stream.write(fallback + self.terminator)
+                except UnicodeEncodeError:
+                    # Last resort: replace any remaining unencodable chars.
+                    safer = fallback.encode(enc, errors="replace").decode(enc, errors="replace")
+                    stream.write(safer + self.terminator)
+            self.flush()
+        except RecursionError:  # See logging.StreamHandler
+            raise
+        except Exception:
+            self.handleError(record)
+
+
 def setup_logging(level: str = "INFO", logfile: Optional[str] = None) -> None:
     """Console plus a rotating file log in the data directory."""
+    # Try to make stdout/stderr utf-8 so emoji like 📚 never raises. This is
+    # best-effort: in some embedded interpreters reconfigure is unavailable.
+    with contextlib.suppress(Exception):
+        sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")  # type: ignore[attr-defined]
+    with contextlib.suppress(Exception):
+        sys.stderr.reconfigure(encoding="utf-8", errors="backslashreplace")  # type: ignore[attr-defined]
+
     numeric = getattr(logging, str(level).upper(), logging.INFO)
-    handlers: list[logging.Handler] = [logging.StreamHandler(sys.stdout)]
+    handlers: list[logging.Handler] = [_SafeStreamHandler(sys.stdout)]
     target = logfile or paths.LOG_PATH
     try:
         os.makedirs(os.path.dirname(target), exist_ok=True)
@@ -764,9 +810,10 @@ async def _run_sync(bot: LofiBot, token: str) -> int:
 def main(argv: Optional[list[str]] = None) -> int:
     # stdout is a pipe under systemd, Docker and CI: without line buffering a
     # printed dashboard key or --check report can sit in the buffer unseen.
-    with contextlib.suppress(AttributeError, ValueError):
-        sys.stdout.reconfigure(line_buffering=True)
-        sys.stderr.reconfigure(line_buffering=True)
+    # Also force utf-8 so emoji in logs (📚) never crashes with latin-1.
+    with contextlib.suppress(AttributeError, ValueError, TypeError):
+        sys.stdout.reconfigure(line_buffering=True, encoding="utf-8", errors="backslashreplace")
+        sys.stderr.reconfigure(line_buffering=True, encoding="utf-8", errors="backslashreplace")
     args = build_parser().parse_args(argv)
     if args.version:
         print(f"Lofi {VERSION}")
