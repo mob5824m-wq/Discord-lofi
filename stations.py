@@ -203,7 +203,7 @@ BUILT_IN_STATIONS: tuple[Station, ...] = (
         id="lofi-girl",
         name="Lofi Girl",
         kind=KIND_YOUTUBE,
-        url="https://www.youtube.com/watch?v=jfKfPfyJRdk",
+        url="https://www.youtube.com/watch?v=X4VbdwhkE10",
         search="lofi hip hop radio beats to relax study to",
         description="beats to relax / study to - the 24/7 lofi hip hop broadcast",
         art="📚",
