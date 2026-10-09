@@ -55,11 +55,11 @@ logger = logging.getLogger("lofi.sources")
 #: bot goes silent until somebody notices.
 FFMPEG_OPTIONS: dict[str, str] = {
     KIND_STREAM: (
-        "-reconnect 1 -reconnect_streamed 1 -reconnect_at_eof 1 "
+        "-nostdin -reconnect 1 -reconnect_streamed 1 -reconnect_at_eof 1 "
         "-reconnect_delay_max 5 -reconnect_max_retries 5 -timeout 15000000"
     ),
     KIND_YOUTUBE: (
-        "-reconnect 1 -reconnect_streamed 1 -reconnect_at_eof 1 "
+        "-nostdin -reconnect 1 -reconnect_streamed 1 -reconnect_at_eof 1 "
         "-reconnect_delay_max 5 -timeout 15000000"
     ),
     KIND_LIBRARY: "-nostdin",
@@ -74,6 +74,7 @@ NETWORK_BEFORE_OPTIONS: tuple[str, ...] = (
     "-reconnect_streamed 1",
     "-reconnect_at_eof 1",
     "-reconnect_delay_max 5",
+    "-nostdin",
 )
 
 
