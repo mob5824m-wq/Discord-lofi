@@ -241,7 +241,10 @@ Gyan.FFmpeg`, and `lofi --check` will say so if it is missing.
    `github.actor != 'github-actions[bot]'` guard stop the loop.
 2. **`build`** — 6 parallel jobs, each installing its OS tools, running
    `python scripts/build.py` (one PyInstaller run + one packaging run) and then
-   `scripts/verify_packages.py`. Failures print the build-log tail as `::error::`
+   the two gates on what it produced: `scripts/verify_packages.py` (is this file
+   really a .deb/.dmg/.exe, and the right architecture?) and
+   `scripts/verify_voice.py` (can the binary inside it import PyNaCl, i.e. do
+   Discord voice at all?). Failures print the log tails as `::error::`
    annotations so they are visible without opening the log.
 3. **`release`** — downloads everything, re-verifies them with
    `scripts/verify_packages.py`, writes `SHA256SUMS.txt`, and publishes the
@@ -300,6 +303,41 @@ It fired after the job body, i.e. after the bump was pushed, the job went red,
 and `build`/`release` were skipped. The cache is gone from that job, and
 `tests/test_release_workflow.py` fails if it comes back or if any job caches
 `pip` without ever running `pip`.
+
+### When a build job fails with nothing to read
+
+Every script CI runs starts with `force_utf8_stdio()` from `scripts/ci_stdio.py`,
+and the `build` job exports `PYTHONIOENCODING=utf-8`.
+
+Python takes the encoding of a *redirected* stream from the platform locale, and
+on the Windows runners that locale is cp1252. The first character outside
+Latin-1 a script prints — the `✓` that `lofi --check` puts on every row, an em
+dash in a verifier's failure message — then raises `UnicodeEncodeError`, and the
+step ends in `Process completed with exit code 1` with no annotation and no
+message. The line that would have explained the failure is the line that could
+not be encoded.
+
+It cost five releases. From v1.1.12 to v1.1.16 both Windows jobs died in "Verify
+the artifact is the real thing" while Linux and macOS passed, so the tags sat on
+`main` and nothing was published. The step had *found* the PyNaCl row it was
+looking for and echoed it back; the row starts with `✓`. `bot.py` had the same
+bug and had just fixed it for itself in `main()` — the workflow's inline Python
+still had it, and being inline in a YAML file it was in nobody's test suite.
+
+Two rules came out of it, both pinned by tests:
+
+- a gate is a script under `scripts/`, never a `python - <<'PY'` heredoc in a
+  workflow, so it can be run against a cp1252 stdout on any platform — which is
+  what `tests/test_release_gates.py` does, in under a second;
+- what a gate prints goes through `ci_stdio.safe_print`, and what it annotates
+  through `verify_voice.annotate`, both of which degrade to `\u2713` rather than
+  die.
+
+`tests/test_release_workflow.py` fails if `PYTHONIOENCODING` disappears from the
+build job, if an inline heredoc comes back, or if `check.log` is written
+somewhere the Diagnostics step cannot print it — it used to live in
+`$RUNNER_TEMP`, a drive-letter path on Windows, and the step whose whole job is
+printing logs never showed it.
 
 ### Runner image retirement
 

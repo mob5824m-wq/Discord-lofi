@@ -59,6 +59,10 @@ import tempfile
 import time
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from ci_stdio import force_utf8_stdio  # noqa: E402
+
 ROOT = Path(__file__).resolve().parent.parent
 DIST = ROOT / "dist"
 BUILD = ROOT / "build"
@@ -601,6 +605,11 @@ def clean_all() -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # `--all` and the packaging warnings print em dashes; a Windows runner's
+    # Python encodes a redirected stream as cp1252 and would die on the first
+    # one. See scripts/ci_stdio.py.
+    force_utf8_stdio()
+
     p = argparse.ArgumentParser(
         description="Build Lofi and wrap it in the OS-native installer (.deb/.dmg/.exe)."
     )
