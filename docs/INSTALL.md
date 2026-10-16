@@ -208,15 +208,30 @@ or just install the `lofi-windows-arm64-setup.exe` package and skip all of it.
 
 ## Getting the code
 
+Linux / macOS:
+
 ```bash
 git clone https://github.com/mob5824m-wq/Discord-lofi.git
 cd Discord-lofi
 
 python3 -m venv .venv
-source .venv/bin/activate            # Windows: .venv\Scripts\activate
+source .venv/bin/activate
 pip install -r requirements.txt      # runtime
 pip install -r requirements-dev.txt  # optional: pytest + pytest-asyncio
 python3 -c "import discord; print(discord.__version__)"   # must print a version
+```
+
+Windows (PowerShell):
+
+```powershell
+git clone https://github.com/mob5824m-wq/Discord-lofi.git
+cd Discord-lofi
+
+python -m venv .venv
+.\.venv\Scripts\activate
+pip install -r requirements.txt      # runtime
+pip install -r requirements-dev.txt  # optional: pytest + pytest-asyncio
+python -c "import discord; print(discord.__version__)"   # must print a version
 ```
 
 Activate the venv (`source .venv/bin/activate`) in every new terminal before running `bot.py`. Without it
@@ -243,7 +258,11 @@ same; only the impossible pins are skipped.
 Then the config:
 
 ```bash
-cp config.example.json config.json
+cp config.example.json config.json                     # Linux / macOS
+```
+
+```powershell
+Copy-Item config.example.json config.json              # Windows (PowerShell)
 ```
 
 `config.json` is **gitignored** on purpose — it is the file a bot token and a dashboard key end up
