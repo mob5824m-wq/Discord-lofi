@@ -32,16 +32,32 @@ At <https://discord.com/developers/applications>:
 
 Put the token where the bot will find it, in one of three ways:
 
+Let the first run ask for it — one prompt, then it stores the answer and starts:
+
 ```bash
-# let the first run ask for it: one prompt, then it stores the answer and starts
 lofi                       # "Bot token: " → paste → Enter
+```
 
-# a file (gitignored, written 0600)
+Or put it in a file (gitignored, written 0600):
+
+```bash
 cp config.example.json config.json
-$EDITOR config.json        # "bot_token": "…"
+nano config.json           # set "bot_token": "…"
+```
 
-# or the environment, which overrides the file and never touches disk
-export LOFI_TOKEN="…"
+```powershell
+Copy-Item config.example.json config.json
+notepad config.json        # Windows (PowerShell) — set "bot_token": "…"
+```
+
+Or the environment, which overrides the file and never touches disk:
+
+```bash
+export LOFI_TOKEN="…"      # Linux / macOS
+```
+
+```powershell
+$env:LOFI_TOKEN = "…"      # Windows (PowerShell), this window only
 ```
 
 The prompt is the whole first-run setup: it asks for the token and nothing else, because that is
@@ -86,13 +102,24 @@ The fix is to go back to the Bot tab and switch them off. The process exits with
 ## 3. Invite the bot
 
 **OAuth2 → URL Generator**: scopes `bot` and `applications.commands`, then the permissions below.
-Or use the integer directly:
+Or copy-paste one of these — set `APP_ID`, run it, open the printed URL:
+
+```bash
+APP_ID="paste-application-id-here"     # General Information → Application ID, not the token
+echo "https://discord.com/api/oauth2/authorize?client_id=${APP_ID}&permissions=281474979941376&scope=bot%20applications.commands"
+```
+
+```powershell
+$APP_ID = "paste-application-id-here"  # General Information → Application ID, not the token
+Start-Process "https://discord.com/api/oauth2/authorize?client_id=$APP_ID&permissions=281474979941376&scope=bot%20applications.commands"
+```
+
+The same URL in raw form, for editing by hand — replace `YOUR_APP_ID` with the **Application ID**
+from the General Information tab (not the token):
 
 ```
 https://discord.com/api/oauth2/authorize?client_id=YOUR_APP_ID&permissions=281474979941376&scope=bot%20applications.commands
 ```
-
-Replace `YOUR_APP_ID` with the **Application ID** from the General Information tab (not the token).
 
 | Permission | Needed for | What breaks without it |
 | --- | --- | --- |
@@ -107,7 +134,9 @@ Replace `YOUR_APP_ID` with the **Application ID** from the General Information t
 `applications.commands` is the scope that makes slash commands appear. Inviting with `bot` alone
 gives you a member that cannot be talked to.
 
-A **voice-only** invite, if you would rather not let it post anything:
+A **voice-only** invite, if you would rather not let it post anything — swap
+`permissions=281474979941376` for `permissions=281474979857408` in the commands above, or use the
+integer directly:
 
 ```
 permissions=281474979857408     # View Channels, Connect, Speak, Set Voice Channel Status
@@ -187,9 +216,17 @@ Two behaviours worth knowing:
 
 ## 6. Start it and publish the commands
 
+Every new terminal, activate the venv first, then start it (packaged installs skip straight to
+`lofi`):
+
 ```bash
-source .venv/bin/activate              # Windows: .venv\Scripts\activate - every new terminal
-python3 bot.py
+source .venv/bin/activate
+python3 bot.py                   # Linux / macOS
+```
+
+```powershell
+.\.venv\Scripts\activate
+python bot.py                    # Windows (PowerShell)
 ```
 
 If this fails with `ModuleNotFoundError: No module named 'discord'`, the venv is not active or the
@@ -231,7 +268,7 @@ working commands in your server right away.
 To publish again without restarting:
 
 ```bash
-python3 bot.py --sync-commands     # CLI: sync, print the result, exit
+python3 bot.py --sync-commands     # CLI: sync, print the result, exit (packaged: lofi --sync-commands)
 ```
 
 or the dashboard's **Commands** page → *Sync slash commands* (also in the top bar), which calls the
@@ -315,7 +352,7 @@ station id falls back to the default rather than failing to play.
 It starts with the bot on `127.0.0.1:8790`. **Print your key:**
 
 ```bash
-python3 bot.py --dashboard-token
+python3 bot.py --dashboard-token    # packaged: lofi --dashboard-token
 ```
 
 It was generated once (`secrets.token_urlsafe(36)`, 48 characters), stored in `config.json` with

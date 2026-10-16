@@ -45,22 +45,32 @@ Pick your machine:
 | **Debian / Ubuntu** arm64 | [`lofi-linux-arm64.deb`](https://github.com/mob5824m-wq/Discord-lofi/releases/latest/download/lofi-linux-arm64.deb) | same, for Raspberry Pi / Graviton |
 
 
+Debian / Ubuntu:
+
 ```bash
-# Debian / Ubuntu
-sudo apt install ffmpeg libopus0  && sudo apt install yt-dlp  # runtime deps, not bundled
+sudo apt update
+sudo apt install -y ffmpeg libopus0 yt-dlp    # runtime deps, not bundled; yt-dlp: YouTube stations
 sudo dpkg -i lofi-linux-amd64.deb && sudo apt-get install -f -y
-lofi --check                                 # verify the machine
-LOFI_TOKEN=... lofi                          # run it
+lofi --check                                  # verify the machine
+lofi                                          # run it — asks for the token if none is stored
+```
 
-# macOS
+macOS:
+
+```bash
 brew install ffmpeg opus
-open lofi-macos-arm64.dmg                    # then run Lofi.pkg inside
-LOFI_TOKEN=... lofi --check
+open lofi-macos-arm64.dmg                     # then run Lofi.pkg inside
+lofi --check
+lofi                                          # run it — asks for the token if none is stored
+```
 
-# Windows (PowerShell)
+Windows (PowerShell):
+
+```powershell
 winget install Gyan.FFmpeg
 .\lofi-windows-amd64-setup.exe
 lofi --check
+lofi                                          # run it — asks for the token if none is stored
 ```
 
 Rather install nothing? Each release also ships the **raw portable binary**
@@ -91,14 +101,26 @@ Running from source instead? See Quick start below.
 
 ## Quick start
 
-**1. Dependencies** — Python 3.9+ (3.11+ recommended), `ffmpeg` and `libopus`:
+**1. Dependencies** — Python 3.9+ (3.11+ recommended), `ffmpeg` and `libopus`. One block per OS —
+paste the one for yours whole.
+
+Debian / Ubuntu (Raspberry Pi OS too):
 
 ```bash
-# Debian / Ubuntu
-sudo apt install python3-venv ffmpeg libopus0
-# macOS
+sudo apt update
+sudo apt install -y python3 python3-venv ffmpeg libopus0
+```
+
+macOS:
+
+```bash
 brew install python ffmpeg opus
-# Windows: winget install Gyan.FFmpeg  (opus is bundled with discord.py on Windows)
+```
+
+Windows (PowerShell):
+
+```powershell
+winget install Gyan.FFmpeg      # opus is bundled with discord.py on Windows
 ```
 
 If your platform has no ffmpeg package, `pip install imageio-ffmpeg` ships a binary the bot will
@@ -106,35 +128,68 @@ find on its own. **arm64 works with no changes** — Raspberry Pi OS, Apple Sili
 native dependency publishes aarch64 wheels and there is no compiled code here
 ([details](docs/INSTALL.md#arm64--raspberry-pi-apple-silicon-graviton)).
 
-**2. Install and create a bot token**
+**2. Get the code** — clone, virtualenv, dependencies.
+
+Linux / macOS:
 
 ```bash
 git clone https://github.com/mob5824m-wq/Discord-lofi
 cd Discord-lofi
-python3 -m venv .venv && . .venv/bin/activate
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt        # runtime
 pip install -r requirements-dev.txt    # optional: pytest + pytest-asyncio
 ```
+
+Windows (PowerShell):
+
+```powershell
+git clone https://github.com/mob5824m-wq/Discord-lofi
+cd Discord-lofi
+python -m venv .venv
+.\.venv\Scripts\activate
+pip install -r requirements.txt        # runtime
+pip install -r requirements-dev.txt    # optional: pytest + pytest-asyncio
+```
+
+**Windows on ARM**: install with `pip install -r requirements-winarm.txt` instead of
+`requirements.txt` — `discord.py[voice]` cannot resolve there, and you want Python 3.12+
+([details](docs/INSTALL.md#arm64--raspberry-pi-apple-silicon-graviton)).
 
 **Every time you open a new terminal**, activate the venv before running any `bot.py` command. Your
 prompt should show `(.venv)`:
 
 ```bash
-cd Discord-lofi
-source .venv/bin/activate              # Windows: .venv\Scripts\activate
-python3 bot.py --dashboard-token       # now works
+cd Discord-lofi && source .venv/bin/activate      # Linux / macOS
+```
+
+```powershell
+cd Discord-lofi; .\.venv\Scripts\activate         # Windows (PowerShell)
 ```
 
 If you see `ModuleNotFoundError: No module named 'discord'`, the venv is not active or the
 requirements were not installed into it. See
 [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md#wont-start-no-module-named-discord).
 
-Create the application at <https://discord.com/developers/applications> → *Bot* → *Reset Token*,
-then invite it with **both** the `bot` and `applications.commands` scopes — the bot publishes its own
-slash commands on start, and it can only do that in a server that granted the scope:
+**3. Create the application and invite the bot** — at
+<https://discord.com/developers/applications>: **New Application** → **Bot** → **Reset Token** →
+copy the token, and note the **Application ID** on the General Information tab (not the token).
+Then paste that ID into one of these and run it — it builds an invite with **both** the `bot` and
+`applications.commands` scopes; the bot publishes its own slash commands on start, and it can only
+do that in a server that granted the scope.
 
+Linux / macOS — prints the URL; open it while signed in to Discord:
+
+```bash
+APP_ID="paste-application-id-here"
+echo "https://discord.com/oauth2/authorize?client_id=${APP_ID}&scope=bot%20applications.commands&permissions=281474979941376"
 ```
-https://discord.com/oauth2/authorize?client_id=YOUR_APP_ID&scope=bot%20applications.commands&permissions=281474979941376
+
+Windows (PowerShell) — opens the invite in your browser:
+
+```powershell
+$APP_ID = "paste-application-id-here"
+Start-Process "https://discord.com/oauth2/authorize?client_id=$APP_ID&scope=bot%20applications.commands&permissions=281474979941376"
 ```
 
 That permission integer asks for: View Channels, Connect, Speak, Set Voice Channel Status, Send
@@ -144,30 +199,57 @@ Message Content, so there is nothing to enable in the developer portal for the b
 Step by step, including what each permission is for and what breaks without it:
 [docs/SETUP.md](docs/SETUP.md).
 
-**3. Configure** — or skip it: the first run asks for the token
+**4. Configure** — or skip it: the first run asks for the token
 
 ```bash
 python3 bot.py             # "Bot token: " → paste → Enter, then it connects
 ```
 
+```powershell
+python bot.py              # Windows (PowerShell) — same prompt
+```
+
 That one prompt is the whole setup: it asks for the token, stores it in `config.json`
 (gitignored, mode 0600) and starts. Nothing else is asked, because nothing else is needed —
-`--check` reports on PyNaCl, ffmpeg, libopus and the rest. Prefer to do it yourself:
+`--check` reports on PyNaCl, ffmpeg, libopus and the rest.
+
+Prefer to do it yourself, either a file (`config.json` is gitignored: it holds your token):
 
 ```bash
-cp config.example.json config.json   # config.json is gitignored: it holds your token
+cp config.example.json config.json
 nano config.json                     # set "bot_token"
 ```
 
-or `export LOFI_TOKEN=...` if you would rather keep the token out of a file entirely. On a fresh
-clone the bot reads `config.example.json` and writes its own config to the data directory, so it
-runs before you copy anything.
+```powershell
+Copy-Item config.example.json config.json   # Windows (PowerShell)
+notepad config.json                         # set "bot_token"
+```
 
-**4. Check, then run**
+or the environment, which overrides the file and never touches disk:
+
+```bash
+export LOFI_TOKEN="paste-token-here"          # Linux / macOS
+```
+
+```powershell
+$env:LOFI_TOKEN = "paste-token-here"          # Windows (PowerShell), this window only
+```
+
+On a fresh clone the bot reads `config.example.json` and writes its own config to the data
+directory, so it runs before you copy anything.
+
+**5. Check, then run**
 
 ```bash
 python3 bot.py --check     # ✓ PyNaCl, ✓ ffmpeg, ✓ libopus, ✓ token …
 python3 bot.py
+```
+
+Windows (PowerShell) — same two commands, `python` instead of `python3`:
+
+```powershell
+python bot.py --check
+python bot.py
 ```
 
 A live run logs the URL but **not** the key — a login key in a journald stream is a key in every
@@ -195,7 +277,7 @@ Demo dashboard - no Discord connection, simulated servers.
   (also printable with 'python3 bot.py --dashboard-token')
 ```
 
-**5. Play**
+**6. Play**
 
 Join a voice channel and run `/lofi play`. Or, without YouTube, `/lofi studio mood:cafe`.
 
