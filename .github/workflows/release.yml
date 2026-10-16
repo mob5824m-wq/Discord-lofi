@@ -250,6 +250,17 @@ jobs:
     name: build ${{ matrix.target_os }}-${{ matrix.arch }} (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
+    # Python picks the encoding of a *redirected* stream from the platform
+    # locale, and on the Windows runners that is cp1252 — so the first ✓ or em
+    # dash a script prints raises UnicodeEncodeError and the step dies with
+    # "Process completed with exit code 1", no annotation and no message. That is
+    # not hypothetical: it failed both Windows jobs of every release from v1.1.12
+    # to v1.1.16 (the verify step prints the ✓ that `lofi --check` puts on every
+    # row), and because the release job requires all six installers, nothing at
+    # all was published for five versions. One variable covers every interpreter
+    # in the job; scripts/ci_stdio.py covers the same scripts run by hand.
+    env:
+      PYTHONIOENCODING: utf-8
 
     steps:
       - uses: actions/checkout@v4
@@ -390,39 +401,49 @@ jobs:
 
           # Byte-level gate: real .deb/.dmg/.exe, not a renamed archive.
           if ! python scripts/verify_packages.py dist/ --expect "$(basename "$PKG")" 2>&1 | tee verify.log; then
-            grep -m 10 -E "FAIL|MISSING|not a |placeholder" verify.log | sed 's/^/::error::/' || true
+            grep -m 10 -E "FAIL|MISSING|not a |placeholder|Traceback" verify.log | sed 's/^/::error::/' || true
             exit 1
           fi
 
-          # ...and the binary inside still runs.
-          BIN="dist/${{ matrix.artifact }}"
-          [ -f "$BIN" ] || BIN="dist/lofi"
+          # ...and the binary inside still runs. Every exit from here on says
+          # which command failed: "Process completed with exit code 1" is what
+          # five lost releases had to be debugged from, and it names nothing.
+          BIN=""
+          for candidate in "dist/${{ matrix.artifact }}" \
+                           "dist/lofi-${OS}-${ARCH}" "dist/lofi-${OS}-${ARCH}.exe" \
+                           "dist/lofi" "dist/lofi.exe"; do
+            if [ -f "$candidate" ]; then BIN="$candidate"; break; fi
+          done
+          if [ -z "$BIN" ]; then
+            echo "::error::no packaged binary to run; dist/ holds: $(ls dist/ | tr '\n' ' ')"
+            exit 1
+          fi
+          echo "Running the packaged binary: $BIN"
           chmod +x "$BIN" 2>/dev/null || true
           export LOFI_TOKEN=ci-dummy-token-not-used
           export LOFI_HOME="$RUNNER_TEMP/lofi-home"
-          "$BIN" --version
-          # PyNaCl is required for Discord voice encryption and must be inside
-          # the frozen binary, not merely present in the build venv. Run the
-          # same diagnostic users get, then fail specifically if its runtime
-          # import is missing. Other --check rows may still report host tools.
-          CHECK_LOG="$RUNNER_TEMP/lofi-check.log"
-          "$BIN" --check > "$CHECK_LOG" 2>&1 || true
-          cat "$CHECK_LOG"
-          python - "$CHECK_LOG" <<'PY'
-          from pathlib import Path
-          import sys
+          if ! "$BIN" --version; then
+            echo "::error::$BIN --version failed: the packaged binary does not run"
+            exit 1
+          fi
 
-          text = Path(sys.argv[1]).read_text(encoding="utf-8", errors="replace")
-          row = next((line for line in text.splitlines()
-                      if len(line.split()) > 1 and line.split()[1] == "PyNaCl"), None)
-          if row is None:
-              print("::error::--check did not report the PyNaCl runtime row")
-              raise SystemExit(1)
-          if "not importable" in row:
-              print("::error::The packaged binary cannot import PyNaCl; Discord voice would be disabled.")
-              raise SystemExit(1)
-          print(f"PyNaCl is bundled and importable: {row.strip()}")
-          PY
+          # PyNaCl is required for Discord voice encryption and must be inside
+          # the frozen binary, not merely present in the build venv: discord.py
+          # imports it lazily and silently drops voice when it is missing, so the
+          # bot would join the channel and play nothing. Run the same diagnostic
+          # users get and gate on the row scripts/verify_voice.py reads. Other
+          # rows may report host tools a build runner does not have (ffmpeg,
+          # libopus), so --check exiting non-zero is not itself the failure.
+          #
+          # check.log lands in the workspace rather than $RUNNER_TEMP for two
+          # reasons: a drive-letter path is the one thing bash on Windows handles
+          # least reliably, and the Diagnostics step below can only print what is
+          # in the workspace it runs in.
+          "$BIN" --check > check.log 2>&1 \
+            || echo "--check exited non-zero (host tools may be missing; the PyNaCl row is the gate)"
+          cat check.log 2>/dev/null \
+            || echo "::error::check.log was not written - redirecting '$BIN --check' failed"
+          python scripts/verify_voice.py check.log
 
           # Per-OS detail, so the log shows what a user will actually get.
           if [ "$OS" = "linux" ] && command -v dpkg-deb >/dev/null 2>&1; then
@@ -446,7 +467,7 @@ jobs:
         run: |
           set +e
           FOUND=0
-          for log in build.log pip.log verify.log; do
+          for log in build.log pip.log verify.log check.log; do
             [ -f "$log" ] || continue
             FOUND=1
             echo "::group::$log (last 120 lines)"
@@ -455,6 +476,12 @@ jobs:
             grep -m 5 -E "error|Error|ERROR|Failed|failed|Traceback|No matching|^pip |^python " "$log" \
               | cut -c1-240 | sed 's/^/::error::/'
           done
+          # Whatever `lofi --check` marked missing, so a gate that ever fails on
+          # a row other than PyNaCl still says which one. (The literal ✗: GNU
+          # grep has no \xNN escape, and -P is not everywhere.)
+          if [ -f check.log ]; then
+            grep -m 5 "✗" check.log | cut -c1-240 | sed 's/^/::error::/'
+          fi
           if [ "$FOUND" = "0" ]; then
             echo "::error::no build log was written - the job died before the build step"
           fi

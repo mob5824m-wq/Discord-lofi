@@ -196,6 +196,62 @@ def test_release_requires_all_six_installers():
 
 
 # --------------------------------------------------------------------------- #
+# the v1.1.12-v1.1.16 regression: a diagnostic that died on its own output
+# --------------------------------------------------------------------------- #
+
+def test_release_build_forces_utf8_on_every_python_it_runs():
+    """Python takes the encoding of a *redirected* stream from the locale, and
+    on the Windows runners that is cp1252 — so the first ``✓`` or em dash a
+    script prints raises UnicodeEncodeError and the step ends in "Process
+    completed with exit code 1" with no annotation and no message.
+
+    That is not a hypothetical. The verify step echoed the PyNaCl row it had
+    found in ``lofi --check``, the row begins with ``✓``, and both Windows jobs
+    failed on it for five releases running: v1.1.12 through v1.1.16 were tagged
+    on main and never published, because ``release`` requires all six installers.
+    Linux and macOS are UTF-8 and passed, which made it look like a Windows
+    packaging problem rather than a printing one. The behaviour is reproduced,
+    on any platform, in tests/test_release_gates.py.
+    """
+    assert re.search(r"^\s*PYTHONIOENCODING:\s*utf-8\s*$", RELEASE["build"], re.MULTILINE), (
+        "release.yml:build no longer pins PYTHONIOENCODING; a Windows runner's "
+        "Python will encode a redirected stream as cp1252 and die on the first "
+        "non-Latin-1 character any script in the job prints"
+    )
+
+
+def test_the_voice_gate_is_a_script_and_not_a_heredoc():
+    """An inline ``python - <<'PY'`` cannot be tested; a script can.
+
+    The heredoc version of this gate is what failed silently — there was no way
+    to run it against a cp1252 stdout except by pushing to main and losing
+    another release. scripts/verify_voice.py is run under exactly that encoding
+    in tests/test_release_gates.py, on every platform, in under a second.
+    """
+    shell = _shell_of(RELEASE["build"])
+    assert "scripts/verify_voice.py" in shell, "the PyNaCl gate is not the script"
+    assert "python - " not in shell, (
+        "release.yml:build runs inline Python from a heredoc again; whatever it "
+        "checks cannot be tested, and its failures will not be readable"
+    )
+
+
+def test_the_check_log_lands_where_diagnostics_can_print_it():
+    """The Diagnostics step exists so a red job says why without anybody opening
+    the log, and it can only show files in the workspace it runs in.
+
+    ``$RUNNER_TEMP`` is a drive-letter path on Windows — the one thing bash there
+    handles least reliably — and a log written there was never printed by the
+    step whose whole job is printing logs.
+    """
+    shell = _shell_of(RELEASE["build"])
+    assert "--check > check.log" in shell, "the --check output is not kept in the workspace"
+    assert re.search(r"for log in [^\n]*check\.log", shell), (
+        "check.log is written but the Diagnostics step does not print it"
+    )
+
+
+# --------------------------------------------------------------------------- #
 # nothing may hang forever: a stalled mirror has to fail, not sit there
 # --------------------------------------------------------------------------- #
 

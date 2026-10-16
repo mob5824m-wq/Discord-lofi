@@ -33,6 +33,10 @@ import sys
 import zipfile
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from ci_stdio import force_utf8_stdio  # noqa: E402
+
 ROOT = Path(__file__).resolve().parent.parent
 
 AR_MAGIC = b"!<arch>\n"
@@ -252,6 +256,12 @@ def verify_dir(dist: Path, expected: list[str] | None = None) -> list[Check]:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # A Windows runner's Python writes cp1252 to a redirected stream, and the
+    # messages below carry em dashes: without this the *verifier* dies with a
+    # UnicodeEncodeError instead of naming the artifact that is wrong. See
+    # scripts/ci_stdio.py.
+    force_utf8_stdio()
+
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("dist", nargs="?", default="dist", help="directory with the built artifacts")
     ap.add_argument("--expect", action="append", default=[], help="artifact name that must be present")
