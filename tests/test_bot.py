@@ -233,6 +233,31 @@ def test_the_check_warns_when_the_dashboard_will_be_exposed(tmp_state, monkeypat
     assert any("HTTPS" in fix for fix in row[3])
 
 
+def test_the_check_names_an_exposed_dashboard_with_no_login_key(tmp_state, monkeypatch):
+    """A passwordless listener on 0.0.0.0 is the one combination worth failing loudly."""
+    monkeypatch.setenv("LOFI_DASHBOARD_HOST", "0.0.0.0")
+    monkeypatch.delenv("LOFI_DASHBOARD_NO_LOGIN", raising=False)
+    (tmp_state / "config.json").write_text(
+        '{"dashboard_require_login": false}', encoding="utf-8"
+    )
+    row = next(row for row in bot_module._check_rows() if row[0] == "dashboard")
+    assert row[1] == "warn"
+    assert "no login key" in row[2]
+    assert any("127.0.0.1" in note for note in row[3])  # the fix, not just the risk
+
+
+def test_the_check_does_not_warn_about_a_keyless_loopback_dashboard(tmp_state, monkeypatch):
+    monkeypatch.delenv("LOFI_DASHBOARD_HOST", raising=False)
+    monkeypatch.delenv("LOFI_DASHBOARD_NO_LOGIN", raising=False)
+    (tmp_state / "config.json").write_text(
+        '{"dashboard_require_login": false}', encoding="utf-8"
+    )
+    row = next(row for row in bot_module._check_rows() if row[0] == "dashboard")
+    assert row[1] == "ok"
+    assert "no login key" in row[2]
+    assert row[3] == []
+
+
 def test_the_check_reports_a_disabled_dashboard(tmp_state, monkeypatch):
     monkeypatch.delenv("LOFI_DASHBOARD_HOST", raising=False)
     (tmp_state / "config.json").write_text('{"dashboard_enabled": false}', encoding="utf-8")
@@ -246,7 +271,7 @@ def test_the_check_reports_a_disabled_dashboard(tmp_state, monkeypatch):
 # --------------------------------------------------------------------------- #
 def test_the_parser_accepts_every_documented_flag():
     args = bot_module.build_parser().parse_args([
-        "--check", "--demo", "--dashboard-token", "--no-dashboard",
+        "--check", "--demo", "--dashboard-token", "--no-dashboard", "--no-dashboard-login",
         "--dashboard-host", "0.0.0.0", "--dashboard-port", "9000",
         "--dashboard-allowed-hosts", "a.example,b.example",
         "--sync-commands", "--log-level", "DEBUG", "--logfile", "/tmp/x.log", "--version",
@@ -278,6 +303,17 @@ def test_cli_overrides_beat_the_config(config):
 def test_no_dashboard_disables_the_server(config):
     args = bot_module.build_parser().parse_args(["--no-dashboard"])
     assert bot_module._apply_cli_overrides(config, args)["dashboard_enabled"] is False
+
+
+def test_no_dashboard_login_switches_the_key_off(config):
+    args = bot_module.build_parser().parse_args(["--no-dashboard-login"])
+    assert bot_module._apply_cli_overrides(config, args)["dashboard_require_login"] is False
+
+
+def test_the_login_key_is_required_unless_asked_otherwise(config):
+    """A flag that is not passed must not turn authentication off."""
+    args = bot_module.build_parser().parse_args([])
+    assert bot_module._apply_cli_overrides(config, args)["dashboard_require_login"] is True
 
 
 def test_the_config_is_untouched_by_the_overrides(config):

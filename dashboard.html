@@ -269,6 +269,7 @@
     .switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 19px; height: 19px; border-radius: 50%; background: #8b84a0; transition: .18s ease; }
     .switch[aria-checked="true"] { background: rgba(177,140,255,.28); border-color: rgba(177,140,255,.5); }
     .switch[aria-checked="true"]::after { left: 21px; background: linear-gradient(140deg, #d9c2ff, #8d63e8); }
+    .switch[disabled] { opacity: .45; cursor: not-allowed; }
 
     /* ---------------- tables, tags, misc ---------------- */
     .tag { display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border: 1px solid var(--line); border-radius: 999px; background: rgba(255,255,255,.03); color: var(--soft); font-size: 10.5px; white-space: nowrap; }
@@ -698,6 +699,10 @@
             </div>
             <div style="margin-top:14px">
               <div class="switch-row">
+                <div class="switch-text"><strong>Require a login key</strong><span>Off serves the console to anyone who can reach this port. Only for a 127.0.0.1 listener or an SSH tunnel.</span></div>
+                <button class="switch" id="net-login" role="switch" aria-checked="true" aria-label="Require a login key"></button>
+              </div>
+              <div class="switch-row">
                 <div class="switch-text"><strong>Secure cookie</strong><span>Only send the session cookie over HTTPS. Forced on when TLS is served here.</span></div>
                 <button class="switch" id="net-secure" role="switch" aria-checked="false" aria-label="Secure cookie"></button>
               </div>
@@ -737,6 +742,7 @@
   const state = {
     csrf: "",
     demo: false,
+    loginRequired: true,
     page: "overview",
     guildId: null,
     overview: null,
@@ -1432,8 +1438,16 @@
     $("net-public").value = data.publicUrl || "";
     $("net-hosts").value = (data.allowedHosts || []).join("\n") + (data.allowAnyHost ? "\n*" : "");
     $("net-proxies").value = (data.trustedProxies || []).join("\n");
+    setSwitch("net-login", data.loginRequired !== false);
     setSwitch("net-secure", Boolean(data.secureCookie));
     setSwitch("net-enabled", data.enabled !== false);
+    state.loginRequired = data.loginRequired !== false;
+    const loginSwitch = $("net-login");
+    loginSwitch.disabled = Boolean(data.loginForcedByEnv);
+    loginSwitch.title = data.loginForcedByEnv
+      ? "Fixed by LOFI_DASHBOARD_NO_LOGIN in the environment - change it there and restart."
+      : "";
+    $("rotate-key-btn").classList.toggle("hidden", data.loginRequired === false);
 
     $("net-warnings").innerHTML = (data.warnings || []).length
       ? `<div class="banner"><span aria-hidden="true">⚠</span><div><strong>Remote access</strong><ul>${
@@ -1443,7 +1457,9 @@
     $("net-urls").innerHTML = (data.urls || []).map((url) =>
       `<dt>URL</dt><dd class="mono">${esc(url)}</dd>`).join("") +
       `<dt>TLS</dt><dd>${data.tls ? "served here" : "not served here"}</dd>
-       <dt>Login key</dt><dd>${data.tokenLength ? `${data.tokenLength} characters stored` : "not generated"}</dd>`;
+       <dt>Login</dt><dd>${data.loginRequired === false
+         ? "off — no key is asked for"
+         : (data.tokenLength ? `${data.tokenLength}-character key stored` : "key not generated yet")}</dd>`;
 
     $("install-info").innerHTML = `
       <dt>Version</dt><dd>${esc(data.version || "?")}</dd>
@@ -1462,6 +1478,7 @@
       publicUrl: $("net-public").value.trim(),
       allowedHosts: lines($("net-hosts").value),
       trustedProxies: lines($("net-proxies").value),
+      requireLogin: readSwitch("net-login"),
       secureCookie: readSwitch("net-secure"),
       enabled: readSwitch("net-enabled"),
     };
@@ -1469,21 +1486,46 @@
     try {
       const result = await api("/api/settings", { method: "POST", body: payload });
       toast(result.message || "Saved");
+      // Re-read first: loadSettings() rewrites #net-warnings, and a key that is
+      // shown exactly once must not be wiped by the refresh that follows it.
+      await loadSettings();
       if (result.token) {
         const box = document.createElement("div");
         box.className = "banner info";
         box.innerHTML = `<span aria-hidden="true">🔑</span><div><strong>New login key</strong>
           <code class="mono" style="display:block;margin-top:6px;overflow-wrap:anywhere">${esc(result.token)}</code>
-          Copy it now — it is not shown again. Existing sessions were signed out.</div>`;
+          Copy it now — it is not shown again. Sign in with it after this session ends.</div>`;
         $("net-warnings").prepend(box);
       }
-      await loadSettings();
+      state.loginRequired = result.loginRequired !== false;
+      renderAccessNotes(state.loginRequired, result.warnings || []);
+      $("logout-btn").classList.toggle("hidden", !state.loginRequired);
     } catch (error) { toast(error.message, true); }
   }
 
   /* ------------------------------------------------------------------ *
    * Boot
    * ------------------------------------------------------------------ */
+  function renderAccessNotes(loginRequired, warnings) {
+    const node = $("warning-banner");
+    const items = Array.isArray(warnings) ? warnings.slice() : [];
+    const keyless = loginRequired === false;
+    if (!items.length && !keyless) {
+      node.classList.add("hidden");
+      node.innerHTML = "";
+      return;
+    }
+    // An informational note when the only thing to say is "there is no key";
+    // the warning styling is for the cases that would bite a remote visitor.
+    node.classList.toggle("info", !items.length);
+    node.classList.remove("hidden");
+    node.innerHTML = `<span aria-hidden="true">${items.length ? "⚠" : "ℹ"}</span><div><strong>Access</strong>${
+      keyless
+        ? `<p style="margin:6px 0 0">No login key: anyone who can reach this address can control the bot. Keep it on <code>127.0.0.1</code> or reach it through an SSH tunnel.</p>`
+        : ""
+    }${items.length ? `<ul>${items.map((warning) => `<li>${esc(warning)}</li>`).join("")}</ul>` : ""}</div>`;
+  }
+
   function showLogin(message) {
     $("app-view").classList.add("hidden");
     $("login-view").classList.remove("hidden");
@@ -1496,6 +1538,8 @@
   function showApp() {
     $("login-view").classList.add("hidden");
     $("app-view").classList.remove("hidden");
+    // Nothing to sign out of when the dashboard never asked for a key.
+    $("logout-btn").classList.toggle("hidden", !state.loginRequired);
     startPolling();
   }
 
@@ -1523,11 +1567,8 @@
       const session = await api("/api/session");
       state.csrf = session.csrfToken || "";
       state.demo = Boolean(session.demo);
-      if ((session.warnings || []).length) {
-        $("warning-banner").classList.remove("hidden");
-        $("warning-banner").innerHTML = `<span aria-hidden="true">⚠</span><div><strong>Remote access</strong><ul>${
-          session.warnings.map((warning) => `<li>${esc(warning)}</li>`).join("")}</ul></div>`;
-      }
+      state.loginRequired = session.loginRequired !== false;
+      renderAccessNotes(state.loginRequired, session.warnings);
       showApp();
       renderNav();
       api("/api/generative")

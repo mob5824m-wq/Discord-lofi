@@ -256,6 +256,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # Not 8765, which is what Sentinel's dashboard uses by default: two bots on
     # one machine should both come up without anybody editing a config first.
     "dashboard_port": 8790,
+    # False serves the UI with no login key: only for a dashboard reached from
+    # this machine itself or through an SSH tunnel, because from there anyone
+    # who can reach the port already has a shell.
+    "dashboard_require_login": True,
     "dashboard_token": "",
     "dashboard_allowed_hosts": [],
     "dashboard_public_url": "",

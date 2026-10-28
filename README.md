@@ -277,6 +277,24 @@ Demo dashboard - no Discord connection, simulated servers.
   (also printable with 'python3 bot.py --dashboard-token')
 ```
 
+**No password at all?** If the only route to the dashboard is your own browser on the machine, or an
+SSH tunnel to it, a key is a step that proves nothing - anyone who can reach the port already has a
+shell. Start it with:
+
+```bash
+python3 bot.py --no-dashboard-login        # or "dashboard_require_login": false in config.json
+```
+
+```
+Dashboard listening at http://127.0.0.1:8790
+Dashboard: http://127.0.0.1:8790/
+Dashboard login: not required (dashboard_require_login is false) - anyone who can reach that address controls the bot.
+```
+
+The page opens straight into the console. No key is generated or stored; the Settings page shows the
+switch, and it warns (in the log and in the UI) the moment the listener is bound somewhere other
+than loopback, because then "anyone who can reach it" stops meaning "you".
+
 **6. Play**
 
 Join a voice channel and run `/lofi play`. Or, without YouTube, `/lofi studio mood:cafe`.
@@ -317,6 +335,10 @@ an admin panel:
 - **One key**, `secrets.token_urlsafe(36)`, generated on first run and stored in `config.json`
   (mode `0600`). `LOFI_DASHBOARD_TOKEN` overrides it for containers, so the key never touches disk.
   Fewer than 32 characters is refused rather than used.
+- **The key can be switched off** with `"dashboard_require_login": false` (or `--no-dashboard-login`,
+  or `LOFI_DASHBOARD_NO_LOGIN=1`) for a dashboard reached only over loopback or an SSH tunnel. It is
+  on by default: sessions and CSRF tokens are still issued when it is off - what disappears is the
+  login screen - and the listener warns if it is ever bound off loopback while keyless.
 - **Sessions** are server-side, 8 hours, sliding; the cookie is `HttpOnly` + `SameSite=Strict`, and
   forced `Secure` whenever TLS is on.
 - **CSRF tokens** are required on every mutating request and compared with `hmac.compare_digest`.
@@ -353,6 +375,16 @@ becomes `Secure` automatically.
 `--dashboard-allowed-hosts '*'` accepts any `Host` header. It exists for a throwaway local preview
 (the sandbox this project was built in, for example) and it logs a warning saying that it disables
 DNS-rebinding protection.
+
+An SSH tunnel needs none of that, and no login key either:
+
+```bash
+ssh -N -L 8790:127.0.0.1:8790 you@your-server      # then open http://127.0.0.1:8790
+```
+
+The listener stays on `127.0.0.1` where only the machine (and therefore the tunnel) can reach it, so
+`--no-dashboard-login` is a safe pairing. Do not add `-g` to the tunnel: that opens the port to your
+whole network, which is the one thing the loopback binding was doing for you.
 
 ### Running it next to another bot
 
@@ -576,6 +608,7 @@ it. The committed template is never a write target.
   "dashboard_enabled": true,
   "dashboard_host": "127.0.0.1",
   "dashboard_port": 8790,
+  "dashboard_require_login": true,
   "dashboard_token": "",
   "dashboard_allowed_hosts": [],
   "dashboard_public_url": "",
@@ -590,7 +623,7 @@ config written by a newer version survives a downgrade.
 
 Environment variables: `LOFI_TOKEN`, `LOFI_HOME`, `LOFI_CONFIG`, `LOFI_DB`, `LOFI_MUSIC`,
 `LOFI_FFMPEG`, `LOFI_FFPROBE`, `LOFI_OPUS`, `LOFI_LOG_LEVEL`, `LOFI_DASHBOARD_TOKEN`, `LOFI_DASHBOARD_HOST`,
-`LOFI_DASHBOARD_PORT`, `LOFI_DASHBOARD_PUBLIC_URL`, `LOFI_DASHBOARD_TLS_CERT`,
+`LOFI_DASHBOARD_PORT`, `LOFI_DASHBOARD_NO_LOGIN`, `LOFI_DASHBOARD_PUBLIC_URL`, `LOFI_DASHBOARD_TLS_CERT`,
 `LOFI_DASHBOARD_TLS_KEY`.
 
 ### Command line
@@ -603,6 +636,7 @@ Environment variables: `LOFI_TOKEN`, `LOFI_HOME`, `LOFI_CONFIG`, `LOFI_DB`, `LOF
 --dashboard-host HOST       override dashboard_host
 --dashboard-port PORT       override dashboard_port
 --dashboard-allowed-hosts   comma-separated Host headers to accept ("*" for a local preview)
+--no-dashboard-login        serve the dashboard with no login key (loopback or an SSH tunnel only)
 --sync-commands             publish the slash commands and exit
 --log-level LEVEL           DEBUG | INFO | WARNING | ERROR
 --logfile PATH              write logs here instead of the data directory
@@ -704,6 +738,7 @@ written to SQLite, which is what the dashboard's History and Overview pages read
 | YouTube: *HTTP 403* | yt-dlp is out of date — `pip install -U yt-dlp` |
 | Dashboard loads, every login bounces | `dashboard_secure_cookie` on while the browser reaches it over HTTP |
 | Dashboard `400 Unrecognized Host header` | add your public name to `dashboard_allowed_hosts` |
+| Login screen appears when it should not | `dashboard_require_login` is true, or `LOFI_DASHBOARD_NO_LOGIN` is unset while config says otherwise — the environment wins |
 | Commands do not appear | `/lofi status`, then check the bot was invited with `applications.commands` |
 
 Full detail, including voice-connection timeouts (usually outbound UDP 50000–65535 being filtered),
@@ -742,7 +777,7 @@ pip install -r requirements.txt -r requirements-dev.txt   # or: pip install pyte
 python3 -m pytest
 ```
 
-**839 tests, no network, no Discord token, ~50 s.**
+**959 tests, no network, no Discord token, ~50 s.**
 
 | file | tests | what it covers |
 | --- | --- | --- |
@@ -756,10 +791,14 @@ python3 -m pytest
 | `test_player.py` | 83 | connect, queue, watchdog stall recovery, status throttle, failure modes |
 | `test_music.py` | 37 | library scan, cache pruning, generative render cache, track rotation |
 | `test_command_tree.py` | 55 | every slash command: signature, permission tier, description, response text |
-| `test_dashboard.py` | 140 | auth, CSRF, sessions, rate limit, Host allowlist, headers, every route |
-| `test_bot.py` | 48 | `--check` startup diagnostics, dashboard bootstrap, token handling |
+| `test_dashboard.py` | 161 | auth, CSRF, sessions, rate limit, Host allowlist, headers, the keyless mode, every route |
+| `test_bot.py` | 62 | `--check` startup diagnostics, dashboard bootstrap, token handling, CLI overrides |
 | `test_demo.py` | 47 | the demo provider: simulated guilds, ticks, listener drift |
 | `test_coexistence.py` | 20 | nothing shared with a sibling bot on the same machine: port, cookie, state dir, database, env prefix, command group |
+| `test_packaging.py` | 39 | the PyInstaller spec, the Debian/macOS/Windows packaging inputs, version stamping |
+| `test_release_gates.py` | 23 | what must be true before a tag ships: version files, changelog, artifact names |
+| `test_release_workflow.py` | 14 | the workflows themselves: job timeouts, the apt installer, the gates that run |
+| `test_ci_apt_install.py` | 9 | the apt installer: bounded attempts, retries, mirror fallback |
 
 `tests/test_dashboard.py` is the file to read before you change anything about authentication.
 
@@ -771,13 +810,14 @@ Both suites run in CI on every push and pull request
 The UI is checked separately, in [tests/ui/](tests/ui/): a jsdom harness that loads the real
 `dashboard.html`, points it at a live `--demo` server and drives it — login, every page, the
 transport buttons, the settings form round-trip, station add/test/remove, the history tables, the
-empty and error states, logout. 64 assertions on *rendered text*, not on CSS, so markup that loses
+empty and error states, logout. Assertions on *rendered text*, not on CSS, so markup that loses
 information fails the run, and any `console.error` fails it too.
 
 ```bash
 cd tests/ui && npm install
-python bot.py --demo --dashboard-token ui-test-key --dashboard-port 8790   # shell 1
-node tests/ui/dashboard.ui.js ui-test-key                                  # shell 2
+LOFI_DASHBOARD_TOKEN=ui-test-key-0123456789abcdef0123456789 \
+  python bot.py --demo --dashboard-port 8790                    # shell 1
+node tests/ui/dashboard.ui.js ui-test-key-0123456789abcdef0123456789   # shell 2
 ```
 
 ## Legal and licensing

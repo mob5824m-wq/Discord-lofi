@@ -30,6 +30,7 @@ def test_default_config_has_every_key_the_code_reads():
         "dashboard_enabled",
         "dashboard_host",
         "dashboard_port",
+        "dashboard_require_login",
         "dashboard_token",
         "dashboard_allowed_hosts",
         "dashboard_public_url",

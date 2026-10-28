@@ -215,7 +215,13 @@ class LofiBot(commands.Bot):
         if self.dashboard is not None and self.dashboard.running:
             for url in self.dashboard.urls():
                 logger.info("Dashboard: %s", url)
-            logger.info("Dashboard key: run 'python3 bot.py --dashboard-token' to print it.")
+            if self.dashboard.login_required:
+                logger.info("Dashboard key: run 'python3 bot.py --dashboard-token' to print it.")
+            else:
+                logger.info(
+                    "Dashboard login: not required (dashboard_require_login is false) - "
+                    "anyone who can reach that address controls the bot."
+                )
         store.log_event("ready", f"connected as {self.user} in {len(self.guilds)} server(s)")
 
     async def sync_commands(self, guild_id: Optional[int] = None) -> dict[str, Any]:
@@ -577,18 +583,26 @@ def _check_rows() -> list[tuple[str, str, str, list[str]]]:
             "dashboard_port", dashboard.DEFAULT_PORT
         )
         reachable_off_machine = not host.startswith("127.") and host not in {"localhost", "::1"}
+        keyless = not dashboard.login_required(config)
+        notes: list[str] = []
+        if reachable_off_machine and keyless:
+            notes.append(
+                f"It will be reachable from other machines on {host}:{port} with no login key: "
+                "anyone who can reach that port can control the bot. Bind 127.0.0.1 and reach "
+                "it through an SSH tunnel, or turn the login key back on."
+            )
+        elif reachable_off_machine:
+            notes.append(
+                f"It will be reachable from other machines on {host}:{port}. Set "
+                "dashboard_allowed_hosts to the name visitors will use, and serve it "
+                "over HTTPS - the login key is sent in clear text otherwise."
+            )
         rows.append(
             (
                 "dashboard",
-                "ok",
-                f"will listen on {host}:{port}",
-                []
-                if not reachable_off_machine
-                else [
-                    f"It will be reachable from other machines on {host}:{port}. Set "
-                    "dashboard_allowed_hosts to the name visitors will use, and serve it "
-                    "over HTTPS - the login key is sent in clear text otherwise.",
-                ],
+                "warn" if reachable_off_machine and keyless else "ok",
+                f"will listen on {host}:{port}" + (" with no login key" if keyless else ""),
+                notes,
             )
         )
     else:
@@ -731,6 +745,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--dashboard-allowed-hosts",
         help='comma-separated Host headers to accept ("*" allows any, for a local preview)',
     )
+    parser.add_argument(
+        "--no-dashboard-login",
+        action="store_true",
+        help="serve the dashboard with no login key (loopback or an SSH tunnel only)",
+    )
     parser.add_argument("--sync-commands", action="store_true", help="sync slash commands and exit")
     parser.add_argument("--log-level", default=os.environ.get("LOFI_LOG_LEVEL", "INFO"))
     parser.add_argument("--logfile", help="write logs here instead of the data directory")
@@ -749,6 +768,8 @@ def _apply_cli_overrides(config: dict, args: argparse.Namespace) -> dict:
         updated["dashboard_allowed_hosts"] = [
             item.strip() for item in args.dashboard_allowed_hosts.split(",") if item.strip()
         ]
+    if args.no_dashboard_login:
+        updated["dashboard_require_login"] = False
     if args.no_dashboard:
         updated["dashboard_enabled"] = False
     return updated
@@ -767,15 +788,22 @@ async def _run_demo(args: argparse.Namespace) -> int:
     store.init_db()
     # The demo uses the same stored key as a real run, so `--dashboard-token`
     # and a running `--demo` always agree about what to type.
-    token = dashboard.ensure_dashboard_token(config, paths.write_config)
-    provider = demo.DemoProvider(config, token=token)
+    token = (
+        dashboard.ensure_dashboard_token(config, paths.write_config)
+        if dashboard.login_required(config)
+        else ""
+    )
+    provider = demo.DemoProvider(config, token=token or None)
     server = dashboard.DashboardServer(provider, save_config=provider.save_config)
     await server.start()
     print("\nDemo dashboard - no Discord connection, simulated servers.")
     for url in server.urls():
         print(f"  open:  {url}")
-    print(f"  key:   {token}")
-    print("  (also printable with 'python3 bot.py --dashboard-token')")
+    if server.login_required:
+        print(f"  key:   {token}")
+        print("  (also printable with 'python3 bot.py --dashboard-token')")
+    else:
+        print("  login: not required (dashboard_require_login is false)")
     print("\nCtrl-C to stop.\n", flush=True)
     stop = asyncio.Event()
 
@@ -827,14 +855,27 @@ def main(argv: Optional[list[str]] = None) -> int:
     if args.demo:
         return asyncio.run(_run_demo(args))
 
+    # A keyless dashboard needs no key generated for it; one is only created
+    # when somebody asks for the login requirement to be back on.
     try:
-        token_value = dashboard.ensure_dashboard_token(config, paths.write_config)
+        token_value = (
+            dashboard.ensure_dashboard_token(config, paths.write_config)
+            if dashboard.login_required(config)
+            else str(config.get("dashboard_token") or "")
+        )
     except ValueError as exc:
         logger.error("Dashboard token problem: %s", exc)
         return 2
 
     if args.dashboard_token:
-        print(token_value)
+        if token_value:
+            print(token_value)
+        else:
+            print(
+                "The dashboard does not ask for a key "
+                "(dashboard_require_login is false, or --no-dashboard-login).",
+                file=sys.stderr,
+            )
         return 0
 
     token = str(config.get("bot_token") or os.environ.get("LOFI_TOKEN") or "").strip()

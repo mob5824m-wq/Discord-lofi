@@ -840,6 +840,200 @@ async def test_a_command_sync_is_reported(client):
 
 
 # --------------------------------------------------------------------------- #
+# No login: a dashboard opened only from this machine or through an SSH tunnel
+# --------------------------------------------------------------------------- #
+@pytest.fixture
+async def keyless_client(tmp_state, monkeypatch):
+    """A dashboard with the key switched off, and a client that has no session."""
+    monkeypatch.delenv(dashboard.LOGIN_ENV_VAR, raising=False)
+    config = make_config(dashboard_require_login=False, dashboard_token="")
+    provider = demo.DemoProvider(config, token=KEY)
+    server = DashboardServer(provider, save_config=provider.save_config)
+    test_client = TestClient(TestServer(server._build_app()))
+    await test_client.start_server()
+    try:
+        yield test_client, server, provider, config
+    finally:
+        await test_client.close()
+
+
+@pytest.fixture
+async def env_keyless_client(tmp_state, monkeypatch):
+    """The same, with the decision made in the environment instead of the file."""
+    monkeypatch.setenv(dashboard.LOGIN_ENV_VAR, "1")
+    config = make_config()
+    provider = demo.DemoProvider(config, token=KEY)
+    server = DashboardServer(provider, save_config=provider.save_config)
+    test_client = TestClient(TestServer(server._build_app()))
+    await test_client.start_server()
+    try:
+        yield test_client, server, provider, config
+    finally:
+        await test_client.close()
+
+
+@pytest.mark.parametrize("config_value,env,expected", [
+    ({}, None, True),
+    ({"dashboard_require_login": True}, None, True),
+    ({"dashboard_require_login": False}, None, False),
+    ({"dashboard_require_login": "false"}, None, False),
+    ({"dashboard_require_login": "TRUE"}, None, True),
+    ({"dashboard_require_login": True}, "1", False),
+    ({"dashboard_require_login": False}, "0", True),
+])
+def test_whether_the_login_key_is_required(config_value, env, expected):
+    """Unset means required: a dashboard without a key has to be asked for."""
+    environ = {} if env is None else {dashboard.LOGIN_ENV_VAR: env}
+    assert dashboard.login_required(config_value, environ) is expected
+
+
+async def test_a_keyless_dashboard_answers_without_a_login(keyless_client):
+    test_client, server, _, _ = keyless_client
+    assert server.login_required is False
+    assert (await test_client.get("/api/overview")).status == 200
+    assert (await test_client.get("/api/stations")).status == 200
+    assert (await test_client.get("/api/settings")).status == 200
+
+
+async def test_a_keyless_dashboard_hands_out_a_session_and_a_csrf_token(keyless_client):
+    """The cookie and the token stay: they cost nothing and still stop a page
+    in another tab from driving the console with the browser's session."""
+    test_client = keyless_client[0]
+    response = await test_client.get("/api/session")
+    payload = await response.json()
+    assert response.status == 200
+    assert payload["authenticated"] is True
+    assert payload["loginRequired"] is False
+    assert payload["csrfToken"]
+    assert dashboard.SESSION_COOKIE in response.headers["Set-Cookie"]
+    assert "HttpOnly" in response.headers["Set-Cookie"]
+    assert "SameSite=Strict" in response.headers["Set-Cookie"]
+
+
+async def test_a_keyless_session_survives_the_next_request(keyless_client):
+    test_client = keyless_client[0]
+    await test_client.get("/api/session")
+    assert (await test_client.get("/api/overview")).status == 200
+
+
+async def test_a_keyless_mutation_still_needs_the_csrf_token(keyless_client):
+    test_client = keyless_client[0]
+    await test_client.get("/api/session")
+    response = await test_client.post("/api/sync", json={})
+    assert response.status == 403
+
+
+async def test_a_keyless_mutation_with_the_csrf_token_is_accepted(keyless_client):
+    test_client = keyless_client[0]
+    payload = await (await test_client.get("/api/session")).json()
+    response = await test_client.post(
+        "/api/sync", json={}, headers={"X-CSRF-Token": payload["csrfToken"]}
+    )
+    assert response.status == 200
+
+
+async def test_a_cookieless_caller_can_drive_the_api(keyless_client):
+    """``curl`` over the SSH tunnel: no cookie, no token, no login."""
+    test_client = keyless_client[0]
+    test_client.session.cookie_jar.clear()
+    assert (await test_client.post("/api/sync", json={})).status == 200
+
+
+async def test_a_keyless_dashboard_does_not_warn_on_loopback(keyless_client):
+    _, server, _, _ = keyless_client
+    assert not any("login key is switched off" in warning for warning in server._warnings)
+
+
+def test_the_risk_is_named_when_the_key_is_off_and_the_listener_is_exposed(tmp_state, monkeypatch):
+    monkeypatch.delenv(dashboard.LOGIN_ENV_VAR, raising=False)
+    monkeypatch.delenv("LOFI_DASHBOARD_HOST", raising=False)
+    config = make_config(dashboard_require_login=False, dashboard_host="0.0.0.0")
+    server = DashboardServer(demo.DemoProvider(config, token=KEY))
+    server._apply_settings(server.config)
+    assert server.login_required is False
+    assert any("login key is switched off" in warning for warning in server._warnings)
+    assert any("127.0.0.1" in warning for warning in server._warnings)  # it states the fix
+
+
+def test_a_keyless_dashboard_generates_no_key(tmp_state, monkeypatch):
+    """A credential the operator decided not to use should not appear in config.json."""
+    monkeypatch.delenv(dashboard.LOGIN_ENV_VAR, raising=False)
+    config = make_config(dashboard_require_login=False, dashboard_token="")
+    saved: list[dict] = []
+    server = DashboardServer(demo.DemoProvider(config, token=KEY), save_config=saved.append)
+    server._apply_settings(server.config)
+    assert server.login_required is False
+    assert server.config.get("dashboard_token") == ""
+    assert saved == []
+
+
+async def test_a_keyless_dashboard_can_still_be_signed_into(env_keyless_client):
+    """The login endpoint keeps working; it just has nothing to check."""
+    test_client, _, _, _ = env_keyless_client
+    response, payload = await login(test_client)
+    assert response.status == 200
+    assert payload["loginRequired"] is False
+
+
+async def test_the_environment_switches_the_key_off(env_keyless_client):
+    test_client, server, _, _ = env_keyless_client
+    assert server.login_required is False
+    assert (await test_client.get("/api/overview")).status == 200
+    payload = await (await test_client.get("/api/settings")).json()
+    assert payload["loginRequired"] is False
+    assert payload["loginForcedByEnv"] is True
+
+
+async def test_the_environment_refuses_to_be_overridden_from_settings(env_keyless_client):
+    test_client = env_keyless_client[0]
+    payload = await (await test_client.get("/api/session")).json()
+    response = await test_client.post(
+        "/api/settings", json={"requireLogin": True}, headers={"X-CSRF-Token": payload["csrfToken"]}
+    )
+    assert response.status == 400
+    assert dashboard.LOGIN_ENV_VAR in (await response.json())["error"]
+
+
+async def test_the_login_key_can_be_switched_off_from_the_settings_page(client):
+    test_client, server, provider, _ = client
+    token = await authed(test_client)
+    response = await test_client.post(
+        "/api/settings", json={"requireLogin": False}, headers={"X-CSRF-Token": token}
+    )
+    assert response.status == 200
+    assert (await response.json())["loginRequired"] is False
+    assert server.login_required is False
+    assert provider.config["dashboard_require_login"] is False
+    # a browser that has never seen the key now gets straight in
+    test_client.session.cookie_jar.clear()
+    assert (await test_client.get("/api/session")).status == 200
+    assert (await test_client.get("/api/overview")).status == 200
+
+
+async def test_turning_the_login_key_back_on_generates_and_returns_one(keyless_client):
+    test_client, server, provider, _ = keyless_client
+    payload = await (await test_client.get("/api/session")).json()
+    response = await test_client.post(
+        "/api/settings", json={"requireLogin": True}, headers={"X-CSRF-Token": payload["csrfToken"]}
+    )
+    assert response.status == 200
+    body = await response.json()
+    assert body["loginRequired"] is True
+    assert body["token"] and len(body["token"]) >= 32
+    assert server.login_required is True
+    assert provider.config["dashboard_require_login"] is True
+    assert provider.config["dashboard_token"] == body["token"]
+
+    # and the key that was just generated is the one that works
+    test_client.session.cookie_jar.clear()
+    assert (await test_client.get("/api/overview")).status == 401
+    response, logged_in = await login(test_client, body["token"])
+    assert response.status == 200
+    assert logged_in["loginRequired"] is True
+    assert (await test_client.get("/api/overview")).status == 200
+
+
+# --------------------------------------------------------------------------- #
 # ensure_dashboard_token
 # --------------------------------------------------------------------------- #
 def test_a_token_is_generated_once_and_saved(tmp_state):

@@ -110,7 +110,7 @@ Two implementations:
 | `demo` | `false` | `true` (the UI shows a banner; every payload carries it) |
 
 This one seam buys three things: the UI can be developed and screenshotted with no Discord token;
-`tests/test_dashboard.py` covers all 140 assertions of the API contract with no network; and a new
+`tests/test_dashboard.py` covers all 161 assertions of the API contract with no network; and a new
 operator can look at the real dashboard *before* deciding to install anything. The demo provider uses
 the **real** station registry and the **real** generative title function, so what you see is what the
 bot would show — only the servers are fake.
@@ -332,8 +332,9 @@ one does not open everything:
 | Control | Implementation | What it stops |
 | --- | --- | --- |
 | One high-entropy key | `secrets.token_urlsafe(36)`, generated once, stored `0600`, never logged; `<32` chars refused; `LOFI_DASHBOARD_TOKEN` overrides | guessing; a key sitting in a log or a backup of a log |
+| The key can be switched off | `dashboard_require_login` / `LOFI_DASHBOARD_NO_LOGIN` / `--no-dashboard-login`; a `web.RequestKey` hands the minted session to `/api/session`; a keyless listener off loopback raises a warning that names the fix | one credential to copy on a machine only you can log in to — at the cost of the key itself, which is why it is opt-in, default-on, and loud when exposed |
 | Server-side sessions | 8 h sliding TTL, `HttpOnly` + `SameSite=Strict` + `Path=/`, `Secure` under TLS | XSS reading a token; CSRF via cross-site posts |
-| CSRF tokens | per session, `hmac.compare_digest` on POST/PUT/PATCH/DELETE for `/api/*` except login | a page you visit driving your authenticated session |
+| CSRF tokens | per session, `hmac.compare_digest` on POST/PUT/PATCH/DELETE for `/api/*` except login; a request without a session cookie in keyless mode is let through, because a cross-site page never receives one | a page you visit driving your authenticated session |
 | Login throttling | 5 failures per IP per 5 min → `429` | brute force. `dashboard_trusted_proxies` makes the IP the *real* one behind a proxy |
 | Host allowlist | loopback always allowed; else `dashboard_allowed_hosts` or the hostname of `dashboard_public_url`; `*` opts out and warns | **DNS rebinding** — a page in your browser pointing a name at `127.0.0.1` and reading the API with your cookie |
 | Body cap | 64 KiB → `413` | a request that exhausts memory |
@@ -400,7 +401,7 @@ the untestable part (a real voice connection) is the smallest part:
 - **Blocking-call guards.** `test_sources.py` patches both the async and the blocking resolution paths,
   because patching one still lets a test reach the network through the other.
 - **A jsdom harness** (`tests/ui/`) drives the real `dashboard.html` against a live `--demo` server:
-  64 assertions on rendered text, failing on any `console.error`.
+  assertions on rendered text, failing on any `console.error`.
 - **A coexistence file.** `test_coexistence.py` exists because this dashboard is modelled on
   Sentinel's and people run both on one machine. It pins every namespace the two would otherwise
   share — the port (8790 here, 8765 there), the cookie name, the state directory, the database and

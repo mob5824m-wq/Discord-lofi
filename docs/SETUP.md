@@ -362,6 +362,34 @@ container supplies it without the key touching disk), and rotate it from the Set
 rotation invalidates every session, as it should. Keys shorter than 32 characters are refused rather
 than used, so a weak value fails loudly at startup.
 
+### If nobody else can reach it, nobody else needs the key
+
+A dashboard opened only from the machine itself, or through an SSH tunnel ("Logging in over SSH",
+below), is already behind the strongest gate you have: a login on that box. Ask for no key at all
+with any one of these — they are the same switch:
+
+```json
+{ "dashboard_require_login": false }
+```
+
+```bash
+python3 bot.py --no-dashboard-login        # this run only, nothing written to config.json
+LOFI_DASHBOARD_NO_LOGIN=1 python3 bot.py   # the environment wins over config.json
+```
+
+The page opens straight into the console; no key is generated or stored. Sessions and CSRF tokens are
+still issued (they cost nothing and keep an unrelated tab from driving the console), so the cookie is
+still `HttpOnly`/`SameSite=Strict`. What changes is only this: there is no login screen.
+
+Two things to know before using it:
+
+- **It is on by default.** Only the flag, the environment variable or `config.json` turns it off;
+  nothing infers it from the bind address, because "I am on 127.0.0.1 today" is not a promise about
+  tomorrow.
+- **Binding off loopback while keyless warns, loudly** — in the log at startup, on the dashboard's
+  Settings page, and in `python3 bot.py --check`, which reports the dashboard as `warn`. That
+  combination means anyone on the network can start and stop music and rewrite configuration.
+
 Open <http://127.0.0.1:8790>, paste the key, and you are in for 8 hours (sliding — activity extends
 it). From there:
 
@@ -450,6 +478,10 @@ What each key does, and why:
   (which is how `secure_cookie` gets forced). Include the scheme; a bare host produces a warning.
 - **`dashboard_tls_cert` / `dashboard_tls_key`** — terminate TLS in the bot instead. Both required
   together; one without the other is a startup error, not a silent fallback to HTTP.
+- **`dashboard_require_login`** — `false` serves the console with no login screen at all. It belongs
+  on a `127.0.0.1` listener reached over loopback or an SSH tunnel, never on anything a proxy
+  forwards to the internet: a reverse proxy in front of a keyless dashboard publishes an admin panel
+  with no password.
 
 A tunnel is the low-effort version, and it is legitimate for one person:
 
@@ -458,7 +490,8 @@ ssh -N -L 8790:127.0.0.1:8790 you@your-server    # then browse http://127.0.0.1:
 ```
 
 Loopback is always allowed by the Host check, so this needs no config change at all — and the key
-travels inside SSH.
+travels inside SSH. If the tunnel is your only route in, you can also drop the key
+(`"dashboard_require_login": false`) and skip the login screen entirely; see section 9.
 
 `--dashboard-allowed-hosts '*'` (or `"*"` in the config) accepts any Host header. It exists for a
 throwaway local preview and logs a warning saying it disables DNS-rebinding protection. Do not leave
@@ -509,7 +542,7 @@ ssh -N -o ServerAliveInterval=60 -L 8790:127.0.0.1:8790 you@your-server
 Then browse to <http://127.0.0.1:8790> on your machine.
 
 - Don't add `-g`. It makes the forwarded port reachable from your whole network, not just your machine.
-- Get the dashboard key in a second SSH session with `python3 bot.py --dashboard-token`, run from the install directory (use the venv's Python if you made one).
+- Get the dashboard key in a second SSH session with `python3 bot.py --dashboard-token`, run from the install directory (use the venv's Python if you made one) — or skip the key entirely and run the bot with `--no-dashboard-login` / `"dashboard_require_login": false`, since the tunnel is already gated by your SSH login.
 - On Windows with PuTTY, the tunnel is under Connection → SSH → Tunnels: source port `8790`, destination `127.0.0.1:8790`.
 
 ## 10. More than one server
@@ -533,4 +566,5 @@ costs), and YouTube stations from one IP will start being rate-limited long befo
 | --- | --- | --- |
 | **Bot token** | Developer portal → Bot → Reset Token, then update `config.json` / `LOFI_TOKEN` and restart | every running copy disconnects immediately |
 | **Dashboard key** | Settings page → regenerate, or set `LOFI_DASHBOARD_TOKEN` and restart | every session is invalidated; everybody logs in again |
+| **Dashboard key, off** | `"dashboard_require_login": false`, `--no-dashboard-login`, or `LOFI_DASHBOARD_NO_LOGIN=1` | no login screen at all; only loopback or a tunnel is left guarding it |
 | **Invite permissions** | re-run the invite URL with a new `permissions=` integer | updates in place, no re-join needed |

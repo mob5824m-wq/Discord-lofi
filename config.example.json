@@ -12,6 +12,7 @@
   "dashboard_enabled": true,
   "dashboard_host": "127.0.0.1",
   "dashboard_port": 8790,
+  "dashboard_require_login": true,
   "dashboard_token": "",
   "dashboard_allowed_hosts": [],
   "dashboard_public_url": "",
