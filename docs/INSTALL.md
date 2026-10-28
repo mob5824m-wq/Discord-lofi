@@ -435,7 +435,10 @@ Notes that matter in a container:
   allowed and everything else as opt-in; `-p 8790:8790` without the `127.0.0.1:` prefix exposes it to
   the network with the login key crossing it in clear text.
 - **Pass the token and the dashboard key as environment variables**, not in a baked-in
-  `config.json`. `LOFI_TOKEN` and `LOFI_DASHBOARD_TOKEN` both override the file.
+  `config.json`. `LOFI_TOKEN` and `LOFI_DASHBOARD_TOKEN` both override the file. If the dashboard is
+  only ever reached through the host loopback or an SSH tunnel, drop the key entirely with
+  `-e LOFI_DASHBOARD_NO_LOGIN=1` instead of passing `LOFI_DASHBOARD_TOKEN`; never combine that with
+  `-p 8790:8790`, which would publish a passwordless admin panel.
 - **Mount `music/`** if you use the library station. `:ro` is fine — the bot only reads it.
 - **The volume holds your history.** Deleting the container without the volume loses `lofi.db`.
 - If the container is behind a proxy that terminates TLS, set `dashboard_public_url` to the

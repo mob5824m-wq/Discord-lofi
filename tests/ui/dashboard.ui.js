@@ -1,11 +1,17 @@
 /* Drives the real dashboard UI in jsdom against a real running server.
  *
- *   node tests/ui/dashboard.ui.js <dashboard-key> [base-url]
+ *   node tests/ui/dashboard.ui.js [dashboard-key] [base-url]
  *
  * The base URL defaults to http://127.0.0.1:8790; set LOFI_DASHBOARD_URL to
  * point at another instance. Start the server first:
  *
- *   python bot.py --demo --dashboard-token <key> --dashboard-port 8790
+ *   LOFI_DASHBOARD_TOKEN=<key> python bot.py --demo --dashboard-port 8790
+ *   python bot.py --demo --no-dashboard-login --dashboard-port 8791   # no key at all
+ *
+ * The key is optional because the server can be told not to ask for one
+ * ("dashboard_require_login": false / --no-dashboard-login). The harness asks
+ * /api/session which mode it is in, skips the login steps when there is no
+ * login, and asserts the keyless UI instead.
  *
  * Asserts on rendered DOM text rather than CSS, so markup that loses
  * information fails the run. Exits non-zero on the first failure.
@@ -13,11 +19,7 @@
 const { JSDOM, VirtualConsole } = require("jsdom");
 
 const BASE = (process.argv[3] || process.env.LOFI_DASHBOARD_URL || "http://127.0.0.1:8790").replace(/\/$/, "");
-const KEY = process.argv[2];
-if (!KEY) {
-  console.error("usage: node tests/ui/dashboard.ui.js <dashboard-key> [base-url]");
-  process.exit(2);
-}
+const KEY = process.argv[2] || "";
 
 let cookieJar = new Map();
 async function fakeFetch(url, init = {}) {
@@ -54,6 +56,17 @@ function visible(window, selector) {
 }
 
 (async () => {
+  // Which mode is the server in? A keyless dashboard answers /api/session with
+  // a session and no key, which is also the cookie the page itself will use.
+  const probe = await fakeFetch("/api/session");
+  const probePayload = probe.status === 200 ? await probe.json() : null;
+  const keyless = Boolean(probePayload && probePayload.loginRequired === false);
+  if (!keyless && !KEY) {
+    console.error("usage: node tests/ui/dashboard.ui.js <dashboard-key> [base-url]");
+    process.exit(2);
+  }
+  if (keyless) console.log("Server reports no login required - skipping the key steps.\n");
+
   const htmlResponse = await fetch(`${BASE}/`);
   const html = await htmlResponse.text();
   const dom = new JSDOM(html, {
@@ -75,21 +88,29 @@ function visible(window, selector) {
   const check = (label, condition, detail = "") =>
     checks.push({ label, ok: Boolean(condition), detail });
 
-  check("login view shown first", visible(window, "#login-view"));
-  check("app view hidden before login", !visible(window, "#app-view"));
+  if (keyless) {
+    // --- no login: the page opens straight into the console ---
+    check("app view shown without a login", visible(window, "#app-view"));
+    check("login view never shown", !visible(window, "#login-view"));
+    check("no sign-out button without a login", !visible(window, "#logout-btn"));
+    check("keyless access is stated", /No login key/i.test(text(window, "#warning-banner")), text(window, "#warning-banner"));
+  } else {
+    check("login view shown first", visible(window, "#login-view"));
+    check("app view hidden before login", !visible(window, "#app-view"));
 
-  // --- login ---
-  document.getElementById("dashboard-key").value = "definitely-wrong";
-  document.getElementById("login-form").dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true }));
-  await sleep(700);
-  check("wrong key shows an error", visible(window, "#login-error"), text(window, "#login-error"));
-  check("still on the login view", visible(window, "#login-view"));
+    // --- login ---
+    document.getElementById("dashboard-key").value = "definitely-wrong";
+    document.getElementById("login-form").dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true }));
+    await sleep(700);
+    check("wrong key shows an error", visible(window, "#login-error"), text(window, "#login-error"));
+    check("still on the login view", visible(window, "#login-view"));
 
-  document.getElementById("dashboard-key").value = KEY;
-  document.getElementById("login-form").dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true }));
-  await sleep(1500);
-  check("app view shown after login", visible(window, "#app-view"));
-  check("login view hidden after login", !visible(window, "#login-view"));
+    document.getElementById("dashboard-key").value = KEY;
+    document.getElementById("login-form").dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true }));
+    await sleep(1500);
+    check("app view shown after login", visible(window, "#app-view"));
+    check("login view hidden after login", !visible(window, "#login-view"));
+  }
 
   // --- overview ---
   check("nav rendered", count(window, ".nav-btn") === 7, `${count(window, ".nav-btn")} buttons`);
@@ -227,6 +248,11 @@ function visible(window, selector) {
   check("warnings rendered", Boolean(document.getElementById("net-warnings").textContent.trim()));
   check("install info rendered", count(window, "#install-info dt") >= 6);
   check("urls rendered", count(window, "#net-urls dt") >= 2);
+  check(
+    "login switch states the mode",
+    document.getElementById("net-login").getAttribute("aria-checked") === (keyless ? "false" : "true"),
+    document.getElementById("net-login").getAttribute("aria-checked"),
+  );
 
   // --- guild switcher ---
   const select = document.getElementById("guild-select");
@@ -237,9 +263,13 @@ function visible(window, selector) {
   check("switching servers changes the player", Boolean(text(window, ".np-station")), text(window, ".np-station"));
 
   // --- logout ---
-  document.getElementById("logout-btn").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
-  await sleep(800);
-  check("logout returns to the login view", visible(window, "#login-view"));
+  if (keyless) {
+    check("no login screen to return to", !visible(window, "#login-view"));
+  } else {
+    document.getElementById("logout-btn").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+    await sleep(800);
+    check("logout returns to the login view", visible(window, "#login-view"));
+  }
 
   const failed = checks.filter((item) => !item.ok);
   for (const item of checks) {

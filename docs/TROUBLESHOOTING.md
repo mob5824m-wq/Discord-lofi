@@ -375,6 +375,18 @@ warning saying it disables that protection — do not leave it on.
 Note that `LOFI_DASHBOARD_TOKEN` overrides the stored key, so a container can be using a different
 one from the file you are reading.
 
+**A login screen appeared, but the dashboard is supposed to have no key.** Something is still asking
+for one, in this precedence order: `LOFI_DASHBOARD_NO_LOGIN` in the environment (it wins in both
+directions — `0` forces the key back on), then `dashboard_require_login` in `config.json`, then
+`--no-dashboard-login` on that run. `python3 bot.py --check` prints which one is in force, the startup
+log says `Dashboard login: not required` when it is off, and the Settings page shows the switch as
+disabled when the environment is what decided it:
+
+> LOFI_DASHBOARD_NO_LOGIN is set in the environment, so the login key is fixed there.
+
+The reverse - no login screen and you wanted one - is the same list read the other way, plus the
+Settings page's **Require a login key** switch, which generates and shows a key when you turn it on.
+
 **Login appears to succeed, then bounces straight back to the login screen.** The session cookie is
 marked `Secure` while your browser reaches the dashboard over plain HTTP, so the browser refuses to
 store it. Either serve HTTPS or set `dashboard_secure_cookie: false`. The Settings page warns about

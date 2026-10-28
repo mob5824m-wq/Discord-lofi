@@ -22,6 +22,15 @@ provide them:
 whose ``X-Forwarded-For`` may be believed. Without it every visitor looks like
 the proxy, and the login throttle becomes one bucket for the whole internet.
 
+``dashboard_require_login`` (default ``true``) is the way out of the key for a
+dashboard only ever opened from the machine itself or through an SSH tunnel:
+the listener is loopback, so the only people who can reach the port already
+have a shell. Setting it to ``false`` - with ``--no-dashboard-login``, or
+``LOFI_DASHBOARD_NO_LOGIN=1`` - serves the UI with no key at all. Sessions and
+CSRF tokens are still issued, because they cost nothing and still stop a page
+in an unrelated tab from driving the console; what is gone is the login screen.
+It warns, loudly, if the listener is bound off loopback while the key is off.
+
 Everything the dashboard *knows* comes from a provider - :class:`BotProvider`
 against a live bot, or ``demo.DemoProvider`` against simulated servers. That
 split is what lets the UI be developed, screenshotted and tested without a
@@ -54,6 +63,11 @@ import store
 logger = logging.getLogger("lofi.dashboard")
 
 SESSION_COOKIE = "lofi_dashboard_session"
+#: Where the middleware parks the session it minted for this request, so
+#: ``/api/session`` reports the CSRF token of the session actually in use.
+#: ``RequestKey`` is the modern spelling; aiohttp 3.9 only has ``AppKey``.
+_REQUEST_KEY = getattr(web, "RequestKey", web.AppKey)
+REQUEST_SESSION = _REQUEST_KEY("lofi_session", dict)
 #: Where the dashboard listens unless the config or ``LOFI_DASHBOARD_PORT`` says
 #: otherwise. Not 8765: that is the default of Sentinel's dashboard, and running
 #: a moderation bot and a music bot on one machine should not require anybody to
@@ -92,6 +106,41 @@ def _snowflake(value: Any) -> Optional[str]:
     if value is None or value == "":
         return None
     return str(value)
+
+
+def _as_bool(value: Any, default: bool = False) -> bool:
+    """A config value as a bool, accepting the strings a JSON file drifts into."""
+    if value is None or value == "":
+        return default
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text in {"1", "true", "yes", "on"}:
+            return True
+        if text in {"0", "false", "no", "off"}:
+            return False
+        return default
+    return bool(value)
+
+
+#: ``LOFI_DASHBOARD_NO_LOGIN=1`` is the container-friendly form of
+#: ``"dashboard_require_login": false``: same effect, no config file to edit.
+LOGIN_ENV_VAR = "LOFI_DASHBOARD_NO_LOGIN"
+
+
+def login_required(config: dict, environ: Optional[dict] = None) -> bool:
+    """Whether the dashboard asks for the login key.
+
+    The environment wins over ``config.json`` so a container or a systemd unit
+    can settle the question without writing it down; ``LOFI_DASHBOARD_NO_LOGIN``
+    accepts ``1``/``0`` (and the usual true/false spellings) in either
+    direction. Anything unset falls back to ``dashboard_require_login``, which
+    defaults to ``True``: servers, tunnels and reverse proxies are common enough
+    that a dashboard should not lose its key just because nobody asked.
+    """
+    raw = (environ if environ is not None else os.environ).get(LOGIN_ENV_VAR, "")
+    if isinstance(raw, str) and raw.strip():
+        return not _as_bool(raw, default=False)
+    return _as_bool(config.get("dashboard_require_login"), default=True)
 
 
 def ensure_dashboard_token(config: dict, save_config: Callable[[dict], None]) -> str:
@@ -462,6 +511,8 @@ class DashboardServer:
         self._sessions: dict[str, dict[str, Any]] = {}
         self._login_failures: dict[str, tuple[int, float]] = {}
         self._token: Optional[str] = None
+        self._require_login = True
+        self._login_env_override = False
         self._host = "127.0.0.1"
         self._port = DEFAULT_PORT
         self._secure_cookie = False
@@ -476,6 +527,11 @@ class DashboardServer:
     @property
     def running(self) -> bool:
         return self._runner is not None
+
+    @property
+    def login_required(self) -> bool:
+        """Whether this dashboard asks for the login key at all."""
+        return self._require_login
 
     @property
     def config(self) -> dict:
@@ -543,7 +599,14 @@ class DashboardServer:
         # that every entry point - start(), or an embedder that builds the app
         # itself - gets a server that can actually authenticate. It also means a
         # too-short token in config.json fails loudly at configuration time.
-        self._token = ensure_dashboard_token(config, self._save_config)
+        self._require_login = login_required(config)
+        self._login_env_override = bool(os.environ.get(LOGIN_ENV_VAR, "").strip())
+        if self._require_login:
+            self._token = ensure_dashboard_token(config, self._save_config)
+        else:
+            # No key is needed, so none is generated: a config file should not
+            # grow a credential the operator has explicitly decided not to use.
+            self._token = str(config.get("dashboard_token") or "")
         self._warnings = self.remote_access_warnings()
         self._settings_applied = True
 
@@ -607,6 +670,14 @@ class DashboardServer:
                 "plain HTTP, so it will refuse to store the session cookie and every login "
                 "will appear to succeed and then bounce back. Serve HTTPS, or turn "
                 "dashboard_secure_cookie off."
+            )
+        if not self._require_login and exposed:
+            warnings.append(
+                f"The login key is switched off (dashboard_require_login is false) and the "
+                f"dashboard is listening on {self._host}: anyone who can reach that port - the "
+                "whole LAN, or the internet if it is forwarded - can start and stop music and "
+                "rewrite configuration. Bind 127.0.0.1 and reach it through an SSH tunnel, or "
+                "turn the key back on."
             )
         if exposed and not secure_browser:
             warnings.append(
@@ -680,13 +751,26 @@ class DashboardServer:
                 return server._security_headers(
                     web.json_response({"error": "Unrecognized Host header."}, status=400)
                 )
+            minted: Optional[str] = None
             if request.path.startswith("/api/") and request.path != "/api/login":
                 session = server._session_for_request(request)
+                if session is None and not server._require_login:
+                    # The key is switched off, so there is nothing to sign in
+                    # to: mint a session for this request and put its cookie on
+                    # the response. Everything downstream is unchanged - the
+                    # CSRF token still exists, it just gets one for free.
+                    session, minted = server._new_session()
+                    # Hand it to the handler as well: /api/session reports the
+                    # CSRF token of the session this request is actually using.
+                    request[REQUEST_SESSION] = session
                 if session is None:
                     return server._security_headers(
                         web.json_response({"error": "Authentication required."}, status=401)
                     )
-                if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+                if request.method in {"POST", "PUT", "PATCH", "DELETE"} and minted is None:
+                    # Only a caller that already holds a session can be riding
+                    # one; a freshly minted (or cookieless) request has no token
+                    # to present yet, and a cross-site page cannot read one.
                     csrf = request.headers.get("X-CSRF-Token", "")
                     if not hmac.compare_digest(csrf, session["csrf"]):
                         return server._security_headers(
@@ -709,6 +793,8 @@ class DashboardServer:
                     )
                 else:
                     response = web.Response(text="Dashboard error", status=500)
+            if minted is not None:
+                server._set_session_cookie(response, minted)
             return server._security_headers(response)
 
         app = web.Application(middlewares=[auth_and_security], client_max_size=MAX_BODY_BYTES)
@@ -839,6 +925,27 @@ class DashboardServer:
         session["expires_at"] = now + SESSION_TTL_SECONDS  # sliding, like Sentinel's
         return session
 
+    def _new_session(self) -> tuple[dict[str, Any], str]:
+        """A fresh server-side session and its id. Nothing is stored on the client."""
+        session_id = secrets.token_urlsafe(32)
+        session = {
+            "csrf": secrets.token_urlsafe(24),
+            "expires_at": time.time() + SESSION_TTL_SECONDS,
+        }
+        self._sessions[session_id] = session
+        return session, session_id
+
+    def _set_session_cookie(self, response: web.StreamResponse, session_id: str) -> None:
+        response.set_cookie(
+            SESSION_COOKIE,
+            session_id,
+            max_age=SESSION_TTL_SECONDS,
+            httponly=True,
+            secure=self._secure_cookie,
+            samesite="Strict",
+            path="/",
+        )
+
     # --- handlers ------------------------------------------------------ #
     async def index(self, _request: web.Request) -> web.Response:
         resource = paths.resource_path("dashboard.html")
@@ -875,32 +982,30 @@ class DashboardServer:
             data = {}
         submitted = data.get("token", "") if isinstance(data, dict) else ""
         expected = self._token or ""
-        if not isinstance(submitted, str) or not expected or not hmac.compare_digest(submitted, expected):
-            self._login_failures[peer] = (count + 1, reset_at)
-            logger.warning("Rejected dashboard login from %s", peer)
-            return web.json_response({"error": "Invalid dashboard key."}, status=401)
+        if self._require_login:
+            if not isinstance(submitted, str) or not expected or not hmac.compare_digest(submitted, expected):
+                self._login_failures[peer] = (count + 1, reset_at)
+                logger.warning("Rejected dashboard login from %s", peer)
+                return web.json_response({"error": "Invalid dashboard key."}, status=401)
 
         self._login_failures.pop(peer, None)
-        session_id = secrets.token_urlsafe(32)
-        csrf = secrets.token_urlsafe(24)
-        self._sessions[session_id] = {"csrf": csrf, "expires_at": time.time() + SESSION_TTL_SECONDS}
+        session, session_id = self._new_session()
         response = web.json_response(
-            {"authenticated": True, "csrfToken": csrf, "demo": bool(self.provider.demo)}
+            {
+                "authenticated": True,
+                "csrfToken": session["csrf"],
+                "demo": bool(self.provider.demo),
+                "loginRequired": self._require_login,
+            }
         )
-        response.set_cookie(
-            SESSION_COOKIE,
-            session_id,
-            max_age=SESSION_TTL_SECONDS,
-            httponly=True,
-            secure=self._secure_cookie,
-            samesite="Strict",
-            path="/",
-        )
+        self._set_session_cookie(response, session_id)
         logger.info("Dashboard login accepted from %s", peer)
         return response
 
     async def session_status(self, request: web.Request) -> web.Response:
-        session = self._session_for_request(request)
+        # The middleware minted a session for this request when the key is off,
+        # and puts its cookie on the response; this endpoint only reports it.
+        session = self._session_for_request(request) or request.get(REQUEST_SESSION)
         if session is None:
             raise web.HTTPUnauthorized(text="Authentication required.")
         return web.json_response(
@@ -908,6 +1013,7 @@ class DashboardServer:
                 "authenticated": True,
                 "csrfToken": session["csrf"],
                 "demo": bool(self.provider.demo),
+                "loginRequired": self._require_login,
                 "warnings": self._warnings,
                 "urls": self.urls(),
             }
@@ -1104,6 +1210,8 @@ class DashboardServer:
                 "tlsCert": str(config.get("dashboard_tls_cert") or ""),
                 "tlsKey": str(config.get("dashboard_tls_key") or ""),
                 "enabled": bool(config.get("dashboard_enabled", True)),
+                "loginRequired": self._require_login,
+                "loginForcedByEnv": self._login_env_override,
                 "warnings": self._warnings,
                 "urls": self.urls(),
                 "tokenLength": len(self._token or ""),
@@ -1152,6 +1260,17 @@ class DashboardServer:
         if "enabled" in payload:
             config["dashboard_enabled"] = bool(payload["enabled"])
             changed.append("enabled")
+        if "requireLogin" in payload:
+            wanted = _as_bool(payload["requireLogin"], default=self._require_login)
+            if self._login_env_override:
+                raise DashboardError(
+                    f"{LOGIN_ENV_VAR} is set in the environment, so the login key is fixed there. "
+                    "Unset it (or set it to 0) and restart to change it from here."
+                )
+            if wanted != _as_bool(config.get("dashboard_require_login"), default=True):
+                config["dashboard_require_login"] = wanted
+                changed.append("the login setting")
+        before_token = str(config.get("dashboard_token") or "")
         if "regenerateToken" in payload and payload["regenerateToken"]:
             config["dashboard_token"] = secrets.token_urlsafe(36)
             changed.append("a new login key")
@@ -1166,13 +1285,18 @@ class DashboardServer:
         self._apply_settings(config)
         store.log_event("settings", "dashboard settings changed: " + ", ".join(changed))
         needs_restart = any(name in {"host", "port", "enabled"} for name in changed)
+        # Turning the key back on generates one, and a generated key is shown
+        # once - the same rule the rotate button follows.
+        current_token = str(config.get("dashboard_token") or "")
+        issued_token = current_token if current_token and current_token != before_token else None
         return web.json_response(
             {
                 "ok": True,
                 "message": "Saved " + ", ".join(changed) + (" (restart the bot to rebind the port)" if needs_restart else ""),
                 "warnings": self._warnings,
                 "urls": self.urls(),
-                "token": config.get("dashboard_token") if "a new login key" in changed else None,
+                "loginRequired": self._require_login,
+                "token": issued_token,
             }
         )
 
@@ -1237,4 +1361,5 @@ __all__ = [
     "Provider",
     "SESSION_COOKIE",
     "ensure_dashboard_token",
+    "login_required",
 ]

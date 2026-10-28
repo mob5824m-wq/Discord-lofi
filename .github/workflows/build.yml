@@ -176,18 +176,51 @@ jobs:
           cat "$RUNNER_TEMP/demo.log"
           exit 1
 
+      # The same demo, with no login key: the configuration this project
+      # recommends for a dashboard reached only over loopback or an SSH tunnel.
+      # It gets its own port, database and pid, so a leak between the two modes
+      # shows up here rather than in somebody's install.
+      - name: Start the keyless demo dashboard
+        env:
+          LOFI_HOME: ${{ runner.temp }}/lofi-ui-keyless
+        run: |
+          nohup python bot.py --demo --no-dashboard-login --dashboard-host 127.0.0.1 \
+            --dashboard-port 8791 > "$RUNNER_TEMP/demo-keyless.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/demo-keyless.pid"
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8791/healthz > /dev/null; then
+              echo "keyless demo dashboard is up after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "keyless demo dashboard did not start; log follows"
+          cat "$RUNNER_TEMP/demo-keyless.log"
+          exit 1
+
       - name: Drive the UI
         env:
           LOFI_DASHBOARD_TOKEN: ci-ui-key-0123456789abcdefghijklmnopqrstuvwxyz
         run: node tests/ui/dashboard.ui.js "$LOFI_DASHBOARD_TOKEN"
 
+      # No key argument: the harness asks /api/session which mode the server is
+      # in and asserts the keyless UI (no login screen, no sign-out, the access
+      # note, the login switch reading off).
+      - name: Drive the UI without a login key
+        run: node tests/ui/dashboard.ui.js "" http://127.0.0.1:8791
+
       - name: Stop the demo dashboard
         if: always()
         run: |
-          if [ -f "$RUNNER_TEMP/demo.pid" ]; then
-            kill "$(cat "$RUNNER_TEMP/demo.pid")" 2>/dev/null || true
-          fi
+          for pidfile in "$RUNNER_TEMP/demo.pid" "$RUNNER_TEMP/demo-keyless.pid"; do
+            if [ -f "$pidfile" ]; then
+              kill "$(cat "$pidfile")" 2>/dev/null || true
+            fi
+          done
 
       - name: Server log
         if: always()
-        run: cat "$RUNNER_TEMP/demo.log" || true
+        run: |
+          cat "$RUNNER_TEMP/demo.log" || true
+          echo "--- keyless ---"
+          cat "$RUNNER_TEMP/demo-keyless.log" || true

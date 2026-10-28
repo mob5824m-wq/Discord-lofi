@@ -36,6 +36,10 @@ def tmp_state(tmp_path, monkeypatch) -> Path:
     monkeypatch.delenv("LOFI_DASHBOARD_TOKEN", raising=False)
     monkeypatch.delenv("LOFI_DASHBOARD_HOST", raising=False)
     monkeypatch.delenv("LOFI_DASHBOARD_PORT", raising=False)
+    # A deployment switch, not a test setting: the tests that want a keyless
+    # dashboard ask for it (dashboard.LOGIN_ENV_VAR) rather than inheriting it
+    # from whatever container the suite happens to run in.
+    monkeypatch.delenv("LOFI_DASHBOARD_NO_LOGIN", raising=False)
     monkeypatch.setattr(paths, "DATA_DIR", tmp_path)
     monkeypatch.setattr(paths, "CACHE_DIR", tmp_path / "cache")
     monkeypatch.setattr(paths, "DB_PATH", str(tmp_path / "test.db"))

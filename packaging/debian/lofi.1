@@ -9,6 +9,7 @@ lofi \- Discord bot that plays lofi in a voice channel, with a web dashboard
 [\fB\-\-no\-dashboard\fR]
 [\fB\-\-dashboard\-host\fR \fIHOST\fR]
 [\fB\-\-dashboard\-port\fR \fIPORT\fR]
+[\fB\-\-no\-dashboard\-login\fR]
 [\fB\-\-sync\-commands\fR]
 [\fB\-\-log\-level\fR \fILEVEL\fR]
 [\fB\-\-logfile\fR \fIPATH\fR]
@@ -52,6 +53,11 @@ Bind the dashboard to \fIHOST\fR instead of the configured value.
 .B \-\-dashboard\-port \fIPORT\fR
 Bind the dashboard to \fIPORT\fR instead of the configured value.
 .TP
+.B \-\-no\-dashboard\-login
+Serve the dashboard with no login key, for a listener reached only over loopback or an SSH tunnel.
+The key is required by default; this flag, \fIdashboard_require_login\fR in \fIconfig.json\fR, or
+\fBLOFI_DASHBOARD_NO_LOGIN\fR turns it off.
+.TP
 .B \-\-sync\-commands
 Publish the slash command tree to Discord and exit.
 .TP
@@ -74,6 +80,10 @@ Defaults to the platform state directory. Set this when running as a service.
 .TP
 .B LOFI_DASHBOARD_TOKEN
 Overrides the dashboard key so it never touches disk.
+.TP
+.B LOFI_DASHBOARD_NO_LOGIN
+Set to \fB1\fR to serve the dashboard with no login key, or \fB0\fR to require one regardless of
+\fIconfig.json\fR. Only safe when the listener stays on loopback or is reached through an SSH tunnel.
 .TP
 .B LOFI_OPUS
 Explicit path to the libopus shared library, if auto\-detection fails.
