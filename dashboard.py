@@ -372,10 +372,10 @@ class BotProvider:
             if action_name == "announce":
                 if player.current is None:
                     raise DashboardError("Nothing is playing to announce.")
-                posted = await player.announce(player.current)
+                # Automatic announcements were removed; inform the caller.
                 return {
-                    "ok": posted,
-                    "message": "Posted the now-playing card" if posted else "No channel is configured for announcements",
+                    "ok": False,
+                    "message": "Automatic now-playing posts are disabled — use /lofi now, /lofi np or /lofi whatsplaying to see what\u2019s playing.",
                     "player": player.state(),
                 }
             raise DashboardError(f"Unknown action: {action_name or '(none)'}")

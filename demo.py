@@ -272,7 +272,7 @@ class DemoGuild:
         if action_name == "announce":
             if not self.connected:
                 raise DashboardError("Nothing is playing to announce.")
-            return f"Posted the now-playing card to #lofi-updates (simulated)"
+            return "Automatic now-playing posts are disabled \u2014 use /lofi now or /lofi np to see what\u2019s playing. (simulated)"
         raise DashboardError(f"Unknown action: {action_name or '(none)'}")
 
 

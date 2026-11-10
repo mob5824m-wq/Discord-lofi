@@ -481,14 +481,16 @@ async def test_a_second_play_reuses_the_open_session(harness, monkeypatch):
 
 
 async def test_a_played_track_is_announced_once(harness, monkeypatch):
+    """No automatic now-playing post - use /lofi now to see what's playing."""
     stub_source(monkeypatch, [stub_track(title="Announced")])
     guild_player = harness["make"](asyncio.get_running_loop())
     await guild_player.play("library", channel=harness["voice_channel"])
     await settle(times=10)
-    embeds = [embed for embed in harness["text_channel"].sent if embed is not None]
-    assert embeds, "the now-playing embed was not sent to the configured text channel"
-    serialised = str(embeds[-1].to_dict())
-    assert "Announced" in serialised
+    # Automatic announcements were removed: the text channel stays quiet.
+    assert harness["text_channel"].sent == []
+    # The on-demand embed still works via the command.
+    embed = guild_player.now_playing_embed(guild_player.current)
+    assert "Announced" in str(embed.to_dict())
 
 
 async def test_announcements_can_be_turned_off(harness, monkeypatch):

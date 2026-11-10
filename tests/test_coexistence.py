@@ -277,7 +277,7 @@ def test_the_command_group_does_not_collide():
     every command here hangs off ``/lofi``.
     """
     described = command_tree.describe()
-    assert len(described) == 30
+    assert len(described) == 33
     qualified = {item["qualifiedName"] for item in described}
     assert all(name.split(" ")[0] == "lofi" for name in qualified), sorted(qualified)
     assert not any(name.startswith(SENTINEL_COMMAND_GROUP) for name in qualified)

@@ -658,6 +658,39 @@ class LofiGroup(app_commands.Group):
             embed=player.now_playing_embed(player.current, requested_by=player.requested_by)
         )
 
+    @app_commands.command(name="np", description="What is playing right now")
+    @app_commands.guild_only()
+    async def np(self, interaction: discord.Interaction) -> None:
+        player = self._player(interaction)
+        if player.current is None:
+            await _refuse(interaction, "Nothing is playing. Start something with `/lofi play`.")
+            return
+        await interaction.response.send_message(
+            embed=player.now_playing_embed(player.current, requested_by=player.requested_by)
+        )
+
+    @app_commands.command(name="whatsplaying", description="What is currently playing")
+    @app_commands.guild_only()
+    async def whatsplaying(self, interaction: discord.Interaction) -> None:
+        player = self._player(interaction)
+        if player.current is None:
+            await _refuse(interaction, "Nothing is playing. Start something with `/lofi play`.")
+            return
+        await interaction.response.send_message(
+            embed=player.now_playing_embed(player.current, requested_by=player.requested_by)
+        )
+
+    @app_commands.command(name="playing", description="Show the current track")
+    @app_commands.guild_only()
+    async def playing(self, interaction: discord.Interaction) -> None:
+        player = self._player(interaction)
+        if player.current is None:
+            await _refuse(interaction, "Nothing is playing. Start something with `/lofi play`.")
+            return
+        await interaction.response.send_message(
+            embed=player.now_playing_embed(player.current, requested_by=player.requested_by)
+        )
+
     @app_commands.command(name="stations", description="List every station this bot can play")
     @app_commands.guild_only()
     async def stations_command(self, interaction: discord.Interaction) -> None:
