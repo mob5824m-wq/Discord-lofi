@@ -666,7 +666,7 @@ async def test_the_command_reference_is_served(client):
     await authed(test_client)
     payload = await (await test_client.get("/api/commands")).json()
     rows = payload["commands"] if isinstance(payload, dict) else payload
-    assert len(rows) == 30
+    assert len(rows) == 33
     assert {"signature", "tier", "description"} <= set(rows[0])
 
 
@@ -836,7 +836,7 @@ async def test_a_command_sync_is_reported(client):
     assert response.status == 200
     payload = await response.json()
     assert payload["ok"] is True
-    assert payload["result"]["global"] == 30
+    assert payload["result"]["global"] == 33
 
 
 # --------------------------------------------------------------------------- #

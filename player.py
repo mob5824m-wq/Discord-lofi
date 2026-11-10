@@ -152,7 +152,6 @@ class GuildPlayer:
         self._last_status_text: Optional[str] = None
         self._recent_library: deque[str] = deque(maxlen=sources.RECENT_LIBRARY_MEMORY)
         self._seed = random.randrange(1, 10_000_000)
-        self._announced_station: Optional[str] = None
 
     # ------------------------------------------------------------------ #
     # Context
@@ -339,7 +338,7 @@ class GuildPlayer:
             self.requested_by = requested_by
             self.restart_attempts = 0
             self.last_error = ""
-            await self._start(track, requested_by=requested_by, announce=True)
+            await self._start(track, requested_by=requested_by)
         return track
 
     def _configured_channel(self) -> Any:
@@ -388,7 +387,7 @@ class GuildPlayer:
                     pass
             raise PlayerError(message) from exc
 
-    async def _start(self, track: Track, *, requested_by: Optional[int] = None, announce: bool = False) -> None:
+    async def _start(self, track: Track, *, requested_by: Optional[int] = None) -> None:
         """Hand a track to the voice client. Caller holds ``_lock``."""
         voice = self.voice
         if voice is None or not voice.is_connected():
@@ -447,7 +446,7 @@ class GuildPlayer:
             title=track.display_title,
             listeners=self.listeners(),
         )
-        self.loop.create_task(self._after_started(track, requested_by=requested_by, announce=announce))
+        self.loop.create_task(self._after_started(track))
         logger.info(
             "Playing %r (%s) in guild %s for %d listener(s)",
             track.display_title, track.kind, self.guild_id, self.listeners(),
@@ -518,11 +517,10 @@ class GuildPlayer:
                 except PlayerError as exc:
                     self.last_error = str(exc)
                     self.last_error_at = time.time()
-                    self.restart_attempts += 1
-                    if self.restart_attempts > MAX_RESTART_ATTEMPTS:
-                        await self._fail_out("source-error")
-                        return
-                    delay = max(delay, min(RESTART_BACKOFF_CAP, 2.0 * self.restart_attempts))
+                    # Do not double-count: the outer restart_attempts already
+                    # tracks overall retries. This failure should only affect
+                    # delay, not the attempt counter, to avoid premature give-up.
+                    delay = max(delay, min(RESTART_BACKOFF_CAP, 2.0 * (self.restart_attempts + 1)))
                     next_track = None
 
             if delay:
@@ -556,22 +554,14 @@ class GuildPlayer:
         message = self.last_error or "playback kept failing"
         logger.error("Giving up in guild %s (%s): %s", self.guild_id, reason, message)
         store.log_event("error", f"playback stopped: {message}"[:300], guild_id=self.guild_id)
-        await self._announce_error(message)
         await self.stop(reason="error")
 
-    async def _after_started(
-        self, track: Track, *, requested_by: Optional[int], announce: bool
-    ) -> None:
-        """Post-start side effects: status, announcement, pre-rendering."""
+    async def _after_started(self, track: Track) -> None:
+        """Post-start side effects: status and pre-rendering."""
         try:
             await self.update_channel_status(force=True)
         except Exception as exc:  # pragma: no cover - status is best effort
             logger.debug("Voice channel status failed: %s", exc)
-        if announce and self.settings["announce"]:
-            station_changed = self._announced_station != track.station_id
-            self._announced_station = track.station_id
-            if station_changed or not track.is_live:
-                await self.announce(track, requested_by=requested_by)
         if track.kind == KIND_GENERATIVE:
             self._prerender_next(track)
 
@@ -682,7 +672,6 @@ class GuildPlayer:
             self.queue.clear()
             self.paused = False
             self.station = None if reason in {"stop", "shutdown", "error", "kicked"} else self.station
-            self._announced_station = None
             if disconnect:
                 await self._teardown_voice()
             store.log_event(
@@ -790,31 +779,7 @@ class GuildPlayer:
         return True
 
     # ------------------------------------------------------------------ #
-    # Announcements
-    # ------------------------------------------------------------------ #
-    def _announcement_channel(self) -> Optional[discord.TextChannel]:
-        guild = self.guild
-        if guild is None:
-            return None
-        channel_id = self.settings["text_channel_id"]
-        if channel_id:
-            channel = guild.get_channel(int(channel_id))
-            # Duck-typed rather than isinstance(TextChannel): threads, news
-            # channels and stage text chats can all carry the embed, and
-            # requiring one exact class silently drops announcements elsewhere.
-            if channel is not None and hasattr(channel, "send") and getattr(channel, "type", "") not in (
-                "voice", "stage_voice", "stage", "category",
-            ):
-                return channel
-        voice_channel = self.channel
-        if voice_channel is not None:
-            category = getattr(voice_channel, "category", None)
-            if category is not None:
-                for channel in category.text_channels:
-                    if permissions.check(guild.me, "send_messages", channel):
-                        return channel
-        return None
-
+    # Now playing embed (used by /lofi now command)
     def now_playing_embed(self, track: Track, *, requested_by: Optional[int] = None) -> discord.Embed:
         """The now-playing card, also rendered as HTML in the dashboard."""
         colour = discord.Colour(0xB18CFF)
@@ -846,37 +811,18 @@ class GuildPlayer:
         return embed
 
     async def announce(self, track: Track, *, requested_by: Optional[int] = None) -> bool:
-        """Post the now-playing card, if an announcement channel can be found."""
-        channel = self._announcement_channel()
-        if channel is None:
-            return False
-        try:
-            await channel.send(embed=self.now_playing_embed(track, requested_by=requested_by))
-        except discord.Forbidden:
-            logger.info("Guild %s: cannot send now-playing messages in #%s", self.guild_id, channel.name)
-            store.log_event(
-                "warning", f"no permission to post now-playing in #{channel.name}", guild_id=self.guild_id
-            )
-            return False
-        except discord.HTTPException as exc:
-            logger.warning("Now-playing post failed in guild %s: %s", self.guild_id, exc)
-            return False
-        return True
+        """Deprecated: automatic now-playing posts were removed.
 
-    async def _announce_error(self, message: str) -> None:
-        channel = self._announcement_channel()
-        if channel is None:
-            return
-        embed = discord.Embed(
-            title="Playback stopped",
-            description=message[:1500],
-            colour=discord.Colour(0xFB7185),
+        Kept for dashboard compatibility; use ``/lofi now`` or ``/lofi np`` to
+        see what's playing. Always returns False to indicate no post was made.
+        """
+        logger.debug(
+            "announce() called for guild %s but automatic posts are disabled; "
+            "use /lofi now instead",
+            self.guild_id,
         )
-        embed.set_footer(text="Fix the station from the dashboard, or run /lofi stations")
-        try:
-            await channel.send(embed=embed)
-        except discord.DiscordException:
-            pass
+        return False
+
 
     # ------------------------------------------------------------------ #
     # Watchdog

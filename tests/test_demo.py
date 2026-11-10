@@ -364,7 +364,7 @@ async def test_a_command_sync_is_simulated(provider):
     result = await provider.sync_commands(None)
     assert result["ok"] is True
     assert result["demo"] is True
-    assert result["result"]["global"] == 30
+    assert result["result"]["global"] == 33
 
 
 async def test_a_guild_scoped_sync_is_simulated(provider):

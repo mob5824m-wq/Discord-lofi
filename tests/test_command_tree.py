@@ -50,7 +50,7 @@ def test_the_tree_is_guild_only(tree):
 
 
 def test_every_documented_command_count(tree, described):
-    assert len(described) == len(commands(tree)) == 30
+    assert len(described) == len(commands(tree)) == 33
 
 
 def test_command_names_are_unique(described):
@@ -63,12 +63,14 @@ def test_the_expected_surface_exists(described):
     assert {
         "lofi play", "lofi pause", "lofi resume", "lofi skip", "lofi stop", "lofi leave",
         "lofi join", "lofi volume", "lofi loop", "lofi queue", "lofi studio", "lofi now",
+        "lofi np", "lofi whatsplaying", "lofi playing",
         "lofi stations", "lofi upnext", "lofi status", "lofi library",
         "lofi setup station", "lofi setup voice_channel", "lofi setup text_channel",
         "lofi setup volume", "lofi setup idle", "lofi setup autostart",
         "lofi setup always_on", "lofi setup dj_role", "lofi setup announce",
         "lofi setup status_line", "lofi setup reset",
         "lofi station add", "lofi station remove", "lofi station default",
+        "lofi np", "lofi whatsplaying", "lofi playing",
     } == names
 
 
@@ -291,7 +293,7 @@ def test_command_names_can_be_computed_from_nothing():
 
 def test_describe_works_with_no_bot_at_all():
     """Documentation and tests must not need a token."""
-    assert len(command_tree.describe()) == 30
+    assert len(command_tree.describe()) == 33
 
 
 def test_build_returns_the_same_tree_the_bot_installs(tree):
